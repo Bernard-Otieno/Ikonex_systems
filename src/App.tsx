@@ -19,6 +19,18 @@ interface Student {
   last_name: string;
   stream_id: number;
 }
+// Blueprint for an individual subject in the global library
+interface Subject {
+  id: number;
+  name: string;
+}
+
+// Blueprint for the intersection mapping linking a subject to a class stream
+interface SubjectStreamMapping {
+  id: number;
+  subject_id: number;
+  stream_id: number;
+}
 
 export default function App() {
   // Navigation active tab controller
@@ -40,6 +52,14 @@ export default function App() {
   });
   const [isEditingStudent, setIsEditingStudent] = useState(false); // Flags if form should show "Update" instead of "Register"
   const [selectedStreamFilter, setSelectedStreamFilter] = useState<string>('all'); // Controls directory filtering dropdown
+  // --- SUBJECT STATE MEMORY CELLS ---
+  const [subjects, setSubjects] = useState<Subject[]>([]); // Array list for all subjects in the library
+  const [subjectMappings, setSubjectMappings] = useState<SubjectStreamMapping[]>([]); // Array list tracking active assignments
+
+  // --- SUBJECT INPUT FORM STATES ---
+  const [newSubjectName, setNewSubjectName] = useState(''); // Stores the typed name for a brand new subject
+  const [selectedMappingStream, setSelectedMappingStream] = useState(''); // Tracks the chosen stream from the assignment dropdown
+  const [selectedMappingSubject, setSelectedMappingSubject] = useState(''); // Tracks the chosen subject from the assignment dropdown
 
   // ==========================================
   // SECTION 2: INITIAL DATA LIFECYCLE
@@ -47,6 +67,8 @@ export default function App() {
   useEffect(() => {
     fetchStreams();
     fetchStudents();
+    fetchSubjects();
+    fetchSubjectMappings();
   }, []);
 
   const handleAddStream = async (e: React.FormEvent) => {
@@ -135,6 +157,77 @@ export default function App() {
       
     if (error) alert(`Error deleting student: ${error.message}`);
     else fetchStudents(); // Refresh view state
+  };
+  // 1. Fetches the master subject inventory list from your database
+  const fetchSubjects = async () => {
+    setLoading(true);
+    const { data, error } = await supabase
+      .from('subjects')
+      .select('*')
+      .order('name', { ascending: true });
+    if (!error && data) setSubjects(data);
+    setLoading(false);
+  };
+
+  // 2. Fetches active linkages showing which subjects are connected to which streams
+  const fetchSubjectMappings = async () => {
+    const { data, error } = await supabase
+      .from('subject_streams') // Reaching out to your relational junction table
+      .select('*');
+    if (!error && data) setSubjectMappings(data);
+  };
+
+  // 3. Submits a brand new academic subject to the global database library
+  const handleAddSubject = async (e: React.FormEvent) => {
+    e.preventDefault();
+    if (!newSubjectName.trim()) {
+      alert("Please enter a subject name.");
+      return;
+    }
+    
+    const { error } = await supabase
+      .from('subjects')
+      .insert([{ name: newSubjectName.trim() }]);
+
+    if (error) {
+      alert(`Error creating subject: ${error.message}`);
+    } else {
+      setNewSubjectName(''); // Reset input box
+      fetchSubjects();       // Refresh the local state pool immediately
+    }
+  };
+
+  // 4. Binds an existing subject directly to a class stream configuration row
+  const handleAssignSubjectToStream = async (e: React.FormEvent) => {
+    e.preventDefault();
+    if (!selectedMappingStream || !selectedMappingSubject) {
+      alert("Please ensure both a class stream and a subject are chosen.");
+      return;
+    }
+
+    // Guard Clause: Prevent creating an identical mapping that already exists
+    const isDuplicate = subjectMappings.some(
+      m => m.stream_id === Number(selectedMappingStream) && m.subject_id === Number(selectedMappingSubject)
+    );
+    if (isDuplicate) {
+      alert("This specific subject is already attached to that class stream layout.");
+      return;
+    }
+
+    const { error } = await supabase
+      .from('subject_streams')
+      .insert([{
+        stream_id: Number(selectedMappingStream),
+        subject_id: Number(selectedMappingSubject)
+      }]);
+
+    if (error) {
+      alert(`Mapping Error: ${error.message}`);
+    } else {
+      // Clear dropdown selection and update database tracking state
+      setSelectedMappingSubject('');
+      fetchSubjectMappings();
+    }
   };
 
   // Performs client-side array filtering based on the stream filtering dropdown choice
@@ -281,7 +374,7 @@ export default function App() {
           {activeTab === 'students' && (
             <div className="bg-white p-6 rounded-xl border border-slate-200 shadow-sm">
 
-              
+
               {/* ================= STUDENT MANAGEMENT MODULE ================= */}
           {activeTab === 'students' && (
             <div className="space-y-8">
