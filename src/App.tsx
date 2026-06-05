@@ -48,7 +48,9 @@ interface Score {
 export default function App() {
   // Navigation active tab controller
   const [activeTab, setActiveTab] = useState<'streams' | 'students' | 'subjects' | 'scores'>('streams');
-  
+  // --- TRACKER STATE FOR DETAILED STREAM VIEWING ---
+  const [selectedDetailedStreamId, setSelectedDetailedStreamId] = useState<number | null>(null);
+
   // App-wide data states
   const [streams, setStreams] = useState<Stream[]>([]);
   const [students, setStudents] = useState<Student[]>([]);
@@ -68,6 +70,8 @@ export default function App() {
   // --- SUBJECT STATE MEMORY CELLS ---
   const [subjects, setSubjects] = useState<Subject[]>([]); // Array list for all subjects in the library
   const [subjectMappings, setSubjectMappings] = useState<SubjectStreamMapping[]>([]); // Array list tracking active assignments
+  // --- SELECTION DROPDOWN STATE FOR NEW STUDENT ASSIGNMENT ---
+  const [selectedStreamId, setSelectedStreamId] = useState<string>('');
 
   // --- SUBJECT INPUT FORM STATES ---
   const [newSubjectName, setNewSubjectName] = useState(''); // Stores the typed name for a brand new subject
@@ -81,13 +85,26 @@ export default function App() {
   // --- FILTERS & ENTRY CONTROL STATES ---
   const [selectedScoreStream, setSelectedScoreStream] = useState('');   // Filter: Selected Class Stream
   const [selectedScoreSubject, setSelectedScoreSubject] = useState(''); // Filter: Selected Subject
-  const [editingScores, setEditingScores] = useState<{ [studentId: number]: string }>({}); // Holds typed inputs temporarily before save
-  // Tracks the chosen CA type (e.g., CAT 1, Quiz 1, Final Exam)
-  const [selectedAssessmentType, setSelectedAssessmentType] = useState('CAT 1');
+  
   // --- STATE REGISTERS FOR THE RECONFIGURED ASSESSMENT COLUMNS ---
   const [editingCAT1, setEditingCAT1] = useState<{ [studentId: number]: string }>({});
   const [editingCAT2, setEditingCAT2] = useState<{ [studentId: number]: string }>({});
   const [editingFinalExam, setEditingFinalExam] = useState<{ [studentId: number]: string }>({});
+  // --- TRACKER STATE FOR DETAILED STUDENT PROFILE VIEWING ---
+  const [selectedDetailedStudentId, setSelectedDetailedStudentId] = useState<number | null>(null);
+  // --- SUB-ENTRY FORM FOR NEW REGISTRATIONS (IF NOT YET APPLIED) ---
+  const [newAdmissionNumber, setNewAdmissionNumber] = useState<string>('');
+  const [newFirstName, setNewFirstName] = useState<string>('');
+  const [newLastName, setNewLastName] = useState<string>('');
+  // --- INLINE SUBJECT EDITING REGISTERS ---
+  const [editingSubjectId, setEditingSubjectId] = useState<number | null>(null);
+  const [editSubjectName, setEditSubjectName] = useState<string>('');
+  const [editSubjectCode, setEditSubjectCode] = useState<string>('');
+
+  // Look for a previously recorded database row matching this student + subject combination
+
+
+// Form state selectors: prioritize active typing edits, fallback to existing saved numbers, or default to an empty string
 
   // ==========================================
   // SECTION 2: INITIAL DATA LIFECYCLE
@@ -398,6 +415,94 @@ export default function App() {
     setLoading(false);
   };
 
+const handleAddStudent = async () => {
+    if (!newAdmissionNumber.trim() || !newFirstName.trim() || !newLastName.trim() || !selectedStreamId) {
+      alert("Please fill out all student registration fields completely.");
+      return;
+    }
+
+    const { error } = await supabase
+      .from('students')
+      .insert([{
+        admission_number: newAdmissionNumber.trim().toUpperCase(),
+        first_name: newFirstName.trim(),
+        last_name: newLastName.trim(),
+        stream_id: Number(selectedStreamId)
+      }]);
+
+    if (error) {
+      alert(`Registration Error: ${error.message}`);
+    } else {
+      // Clear input form values upon successful creation
+      setNewAdmissionNumber('');
+      setNewFirstName('');
+      setNewLastName('');
+      fetchStudents(); // Sync local screen memory layout
+    }
+  };
+// --- OPERATIONS FOR CURRICULUM SUBJECT ENTRIES ---
+
+  // PUT Operation: Amends updated titles/codes on a specific subject index
+  const handleUpdateSubject = async (id: number) => {
+    if (!editSubjectName.trim() || !editSubjectCode.trim()) {
+      alert("Subject title or course code definitions cannot be saved blank.");
+      return;
+    }
+
+    const { error } = await supabase
+      .from('subjects')
+      .update({ name: editSubjectName.trim(), code: editSubjectCode.trim().toUpperCase() })
+      .eq('id', id);
+
+    if (error) {
+      alert(`Update Error: ${error.message}`);
+    } else {
+      setEditingSubjectId(null);
+      fetchSubjects(); // Refresh local application memory layout
+    }
+  };
+
+  // DELETE Operation: Wipes a subject index out of the cloud infrastructure
+  const handleDeleteSubject = async (id: number) => {
+    if (!confirm("Are you sure you want to delete this subject? Warning: This will wipe out all corresponding teacher grade entries and stream mappings for this subject!")) {
+      return;
+    }
+
+    const { error } = await supabase
+      .from('subjects')
+      .delete()
+      .eq('id', id);
+
+    if (error) {
+      alert(`Delete Error: ${error.message}`);
+    } else {
+      // Clean up local editing pointers if the active item was wiped
+      if (editingSubjectId === id) setEditingSubjectId(null);
+      
+      // Sync all state containers completely
+      fetchSubjects();
+      fetchSubjectMappings();
+      fetchScores();
+    }
+  };
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
   // ==========================================
   // SECTION 3: THE MAIN APPLICATION VIEW SHELL
   // ==========================================
@@ -458,380 +563,514 @@ export default function App() {
 
 
 
-          {/* ================= CLASS STREAMS MODULE ================= */}
-
+          {/* ================= STREAMS MANAGEMENT & DETAILED PROFILE Terminal ================= */}
           {activeTab === 'streams' && (
-            <div className="bg-white p-6 rounded-xl border border-slate-200 shadow-sm">
-              {/* Column 1: Creation Input Form */}
-              <div className="bg-white p-6 rounded-xl border border-slate-200 shadow-sm h-fit">
-                <h3 className="text-sm font-bold uppercase tracking-wider text-slate-400 mb-4">
-                  Establish New Stream
-                </h3>
-                <form onSubmit={handleAddStream} className="space-y-4">
-                  <div>
-                    <label className="block text-xs font-semibold text-slate-600 mb-1">
-                      Stream Name
-                    </label>
-                    <input 
-                      type="text" 
-                      placeholder="e.g., Form 1A"
-                      value={newStreamName}
-                      onChange={(e) => setNewStreamName(e.target.value)}
-                      className="w-full bg-slate-50 border border-slate-200 rounded-lg px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-indigo-500"
-                    />
-                  </div>
-                  <button 
-                    type="submit" 
-                    className="w-full bg-indigo-600 text-white text-sm font-medium py-2 rounded-lg hover:bg-indigo-700 transition shadow-sm"
-                  >
-                    + Add Stream
-                  </button>
-                </form>
-              </div>
-
-              {/* Column 2 & 3: Master Directory Grid Table */}
-              <div className="bg-white p-6 rounded-xl border border-slate-200 shadow-sm col-span-2">
-                <h3 className="text-sm font-bold uppercase tracking-wider text-slate-400 mb-4">
-                  Configured Academy Streams ({streams.length})
-                </h3>
-                {streams.length === 0 ? (
-                  <p className="text-sm text-slate-500 italic py-4">
-                    No stream records found. Create one using the side panel form.
-                  </p>
-                ) : (
-                  <div className="divide-y divide-slate-100 max-h-[400px] overflow-y-auto">
-                    {streams.map((stream) => (
-                      <div key={stream.id} className="py-3 flex justify-between items-center text-sm">
-                        <span className="font-semibold text-slate-700">{stream.name}</span>
-                        <span className="text-xs text-slate-400 bg-slate-100 px-2 py-0.5 rounded font-mono">
-                          STREAM_ID: #{stream.id}
-                        </span>
-                      </div>
-                    ))}
-                  </div>
-                )}
-              </div>
-            </div>
-          )}
-
-
-
-          {/* ================= CLASS STUDENTS MODULE ================= */}
-
-          {activeTab === 'students' && (
-            <div className="bg-white p-6 rounded-xl border border-slate-200 shadow-sm">
-
-
-              {/* ================= STUDENT MANAGEMENT MODULE ================= */}
-          {activeTab === 'students' && (
-            <div className="space-y-8">
+            <div className="space-y-6">
               
-              {/* Form Block: Registry Inputs */}
-              <div className="bg-white p-6 rounded-xl border border-slate-200 shadow-sm">
-                <h3 className="text-sm font-bold uppercase tracking-wider text-slate-400 mb-4">
-                  {isEditingStudent ? "Modify Student Profile Record" : "Register New Student Instance"}
-                </h3>
-                <form onSubmit={handleSaveStudent} className="grid grid-cols-1 md:grid-cols-4 gap-4 items-end">
-                  <div>
-                    <label className="block text-xs font-semibold text-slate-600 mb-1">Admission Number</label>
-                    <input 
-                      type="text" 
-                      placeholder="e.g., ADM-2026-001"
-                      value={studentForm.admission_number}
-                      onChange={(e) => setStudentForm({...studentForm, admission_number: e.target.value})}
-                      className="w-full bg-slate-50 border border-slate-200 rounded-lg px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-indigo-500"
-                    />
-                  </div>
-                  <div>
-                    <label className="block text-xs font-semibold text-slate-600 mb-1">First Name</label>
-                    <input 
-                      type="text" 
-                      placeholder="Jane"
-                      value={studentForm.first_name}
-                      onChange={(e) => setStudentForm({...studentForm, first_name: e.target.value})}
-                      className="w-full bg-slate-50 border border-slate-200 rounded-lg px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-indigo-500"
-                    />
-                  </div>
-                  <div>
-                    <label className="block text-xs font-semibold text-slate-600 mb-1">Last Name</label>
-                    <input 
-                      type="text" 
-                      placeholder="Smith"
-                      value={studentForm.last_name}
-                      onChange={(e) => setStudentForm({...studentForm, last_name: e.target.value})}
-                      className="w-full bg-slate-50 border border-slate-200 rounded-lg px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-indigo-500"
-                    />
-                  </div>
-                  <div>
-                    <label className="block text-xs font-semibold text-slate-600 mb-1">Assigned Stream</label>
-                    <select
-                      value={studentForm.stream_id}
-                      onChange={(e) => setStudentForm({...studentForm, stream_id: e.target.value})}
-                      className="w-full bg-slate-50 border border-slate-200 rounded-lg px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-indigo-500"
-                    >
-                      <option value="">-- Choose Class Target --</option>
-                      {streams.map(st => (
-                        <option key={st.id} value={st.id}>{st.name}</option>
-                      ))}
-                    </select>
-                  </div>
-                  
-                  <div className="md:col-span-4 flex justify-end space-x-2">
-                    {isEditingStudent && (
-                      <button 
-                        type="button" 
-                        onClick={() => {
-                          setIsEditingStudent(false);
-                          setStudentForm({ id: null, admission_number: '', first_name: '', last_name: '', stream_id: '' });
-                        }}
-                        className="bg-slate-200 text-slate-700 text-sm font-medium px-4 py-2 rounded-lg hover:bg-slate-300 transition"
-                      >
-                        Cancel Edit
+              {!selectedDetailedStreamId ? (
+                <>
+                  {/* Standard Form Header Block for Stream Entry */}
+                  <div className="bg-white p-6 rounded-xl border border-slate-200 shadow-sm">
+                    <h3 className="text-sm font-bold text-slate-800 mb-4 uppercase tracking-wider">
+                      Register Fresh Class Stream
+                    </h3>
+                    <div className="flex flex-col sm:flex-row gap-3">
+                      <input
+                        type="text"
+                        placeholder="e.g., Form 1 West, Grade 6 Blue"
+                        value={newStreamName}
+                        onChange={(e) => setNewStreamName(e.target.value)}
+                        className="flex-1 bg-slate-50 border border-slate-200 rounded-lg px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-indigo-500"
+                      />
+                      <button
+                          onClick={handleAddStream}
+                          className="bg-indigo-600 text-white text-sm font-bold px-5 py-2 rounded-lg hover:bg-indigo-700 transition whitespace-nowrap"
+                        >
+                          + Create Stream
                       </button>
-                    )}
-                    <button type="submit" className="bg-indigo-600 text-white text-sm font-medium px-6 py-2 rounded-lg hover:bg-indigo-700 transition shadow-sm">
-                      {isEditingStudent ? "Apply Record Update" : "Register Student"}
-                    </button>
+                    </div>
                   </div>
-                </form>
-              </div>
 
-              {/* Data Table Block: Directory & Live Filtering */}
-              <div className="bg-white p-6 rounded-xl border border-slate-200 shadow-sm">
-                <div className="flex flex-col md:flex-row justify-between items-start md:items-center mb-6 gap-4">
-                  <h3 className="text-sm font-bold uppercase tracking-wider text-slate-400">Institutional Directory Registry</h3>
-                  <div className="flex items-center space-x-2">
-                    <label className="text-xs font-semibold text-slate-500 whitespace-nowrap">Filter Stream View:</label>
-                    <select
-                      value={selectedStreamFilter}
-                      onChange={(e) => setSelectedStreamFilter(e.target.value)}
-                      className="bg-slate-50 border border-slate-200 rounded-lg px-3 py-1.5 text-xs focus:outline-none focus:ring-1 focus:ring-indigo-500"
-                    >
-                      <option value="all">Show All Registered Students</option>
-                      {streams.map(st => (
-                        <option key={st.id} value={st.id}>{st.name}</option>
-                      ))}
-                    </select>
-                  </div>
-                </div>
+                  {/* Streams Directory Listing Grid */}
+                  <div className="bg-white rounded-xl border border-slate-200 shadow-sm overflow-hidden">
+                    <div className="px-6 py-4 bg-slate-50 border-b border-slate-200">
+                      <h3 className="text-xs font-bold uppercase tracking-wider text-slate-500">
+                        Active Institutional Streams
+                      </h3>
+                    </div>
 
-                {filteredStudents.length === 0 ? (
-                  <p className="text-sm text-slate-500 italic text-center py-8">No student profiles match the filter criteria.</p>
-                ) : (
-                  <div className="overflow-x-auto">
-                    <table className="w-full text-left border-collapse text-sm">
-                      <thead>
-                        <tr className="border-b border-slate-100 text-slate-400 font-semibold text-xs uppercase tracking-wider">
-                          <th className="pb-3">Adm Number</th>
-                          <th className="pb-3">Full Name</th>
-                          <th className="pb-3">Assigned Class Stream</th>
-                          <th className="pb-3 text-right">Actions</th>
-                        </tr>
-                      </thead>
-                      <tbody className="divide-y divide-slate-100">
-                        {filteredStudents.map((student) => {
-                          const matchingStream = streams.find(str => str.id === student.stream_id);
+                    {streams.length === 0 ? (
+                      <p className="text-sm text-slate-500 italic text-center py-8">No active streams established yet.</p>
+                    ) : (
+                      <div className="divide-y divide-slate-100">
+                        {streams.map((stream) => {
+                          const streamStudentsCount = students.filter(s => s.stream_id === stream.id).length;
+                          const streamSubjectsCount = subjectMappings.filter(m => m.stream_id === stream.id).length;
+
                           return (
-                            <tr key={student.id} className="hover:bg-slate-50/80 transition">
-                              <td className="py-3 font-mono text-xs text-indigo-600 font-semibold">{student.admission_number}</td>
-                              <td className="py-3 font-medium text-slate-700">{student.first_name} {student.last_name}</td>
-                              <td className="py-3">
-                                <span className="bg-slate-100 text-slate-700 text-xs px-2 py-0.5 rounded-full font-medium">
-                                  {matchingStream ? matchingStream.name : 'Unknown/Unassigned'}
-                                </span>
-                              </td>
-                              <td className="py-3 text-right space-x-3">
-                                <button 
-                                  onClick={() => handleEditStudentClick(student)}
-                                  className="text-xs font-semibold text-indigo-600 hover:text-indigo-800 transition"
-                                >
-                                  Modify
-                                </button>
-                                <button 
-                                  onClick={() => handleDeleteStudent(student.id)}
-                                  className="text-xs font-semibold text-rose-600 hover:text-rose-800 transition"
-                                >
-                                  Remove
-                                </button>
-                              </td>
-                            </tr>
+                            <div key={stream.id} className="p-4 flex items-center justify-between hover:bg-slate-50/50 transition">
+                              <div>
+                                <h4 className="font-semibold text-slate-800 text-sm">{stream.name}</h4>
+                                <p className="text-xs text-slate-400 mt-0.5">
+                                  👥 {streamStudentsCount} Registered Students &nbsp;|&nbsp; 📚 {streamSubjectsCount} Assigned Frameworks
+                                </p>
+                              </div>
+                              <button
+                                onClick={() => setSelectedDetailedStreamId(Number(stream.id))}
+                                className="border border-slate-200 text-slate-600 text-xs font-semibold px-3 py-1.5 rounded-lg hover:bg-slate-50 hover:text-indigo-600 transition"
+                              >
+                                View Breakdown →
+                              </button>
+                            </div>
                           );
                         })}
-                      </tbody>
-                    </table>
+                      </div>
+                    )}
                   </div>
-                )}
-              </div>
+                </>
+              ) : (
+                /* ================= SINGLE CLASS STREAM DETAILED DASHBOARD BREAKDOWN ================= */
+                (() => {
+                  const targetStream = streams.find(s => s.id === selectedDetailedStreamId);
+                  if (!targetStream) return <p className="text-sm text-red-500">Stream context offline.</p>;
+
+                  const roster = students.filter(s => s.stream_id === targetStream.id);
+                  const assignedLinks = subjectMappings.filter(m => m.stream_id === targetStream.id);
+                  
+                  return (
+                    <div className="space-y-6 animate-fadeIn">
+                      
+                      {/* Interactive Breadcrumb Control Header */}
+                      <div className="flex items-center justify-between">
+                        <div className="flex items-center gap-3">
+                          <button
+                            onClick={() => setSelectedDetailedStreamId(null)}
+                            className="p-1.5 rounded-lg border border-slate-200 text-slate-500 hover:bg-slate-50 transition"
+                            title="Back to grid view"
+                          >
+                            🔙 Back
+                          </button>
+                          <div>
+                            <h2 className="text-xl font-bold text-slate-900">{targetStream.name}</h2>
+                            <p className="text-xs text-slate-500">Detailed structural breakdown and current rosters</p>
+                          </div>
+                        </div>
+                      </div>
+
+                      {/* Stat Metrics Row Counters */}
+                      <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
+                        <div className="bg-indigo-50 border border-indigo-100 rounded-xl p-4 flex items-center gap-4 shadow-2xs">
+                          <span className="text-2xl">👥</span>
+                          <div>
+                            <span className="block text-[11px] font-bold text-indigo-500 uppercase tracking-wide">Roster Size</span>
+                            <span className="text-xl font-black text-slate-800">{roster.length} students</span>
+                          </div>
+                        </div>
+                        <div className="bg-emerald-50 border border-emerald-100 rounded-xl p-4 flex items-center gap-4 shadow-2xs">
+                          <span className="text-2xl">📚</span>
+                          <div>
+                            <span className="block text-[11px] font-bold text-emerald-500 uppercase tracking-wide">Subject Scope</span>
+                            <span className="text-xl font-black text-slate-800">{assignedLinks.length} active mappings</span>
+                          </div>
+                        </div>
+                      </div>
+
+                      {/* Sub-layout: Subject Scopes vs Student Roster list */}
+                      <div className="grid grid-cols-1 lg:grid-cols-3 gap-6">
+                        
+                        {/* Column A: Assigned Subject Frameworks */}
+                        <div className="bg-white border border-slate-200 rounded-xl shadow-sm overflow-hidden h-fit">
+                          <div className="px-4 py-3 bg-slate-50 border-b border-slate-200 font-bold text-xs text-slate-500 uppercase tracking-wider">
+                            Mapped Subject Frameworks
+                          </div>
+                          {assignedLinks.length === 0 ? (
+                            <p className="p-4 text-xs text-slate-400 italic">No assigned curriculum subjects.</p>
+                          ) : (
+                            <div className="divide-y divide-slate-100 max-h-80 overflow-y-auto">
+                              {assignedLinks.map(link => {
+                                const sub = subjects.find(s => s.id === link.subject_id);
+                                return sub ? (
+                                  <div key={link.id} className="p-3 text-xs flex items-center justify-between">
+                                    <span className="font-semibold text-slate-700">{sub.name}</span>
+                                    <span className="font-mono bg-slate-100 px-1.5 py-0.5 rounded text-slate-500 font-bold">{sub.code}</span>
+                                  </div>
+                                ) : null;
+                              })}
+                            </div>
+                          )}
+                        </div>
+
+                        {/* Column B: Full Roster Rollcall Sheet View */}
+                        <div className="bg-white border border-slate-200 rounded-xl shadow-sm overflow-hidden lg:col-span-2">
+                          <div className="px-4 py-3 bg-slate-50 border-b border-slate-200 font-bold text-xs text-slate-500 uppercase tracking-wider">
+                            Class Student Roster Rollcall
+                          </div>
+                          {roster.length === 0 ? (
+                            <p className="p-6 text-sm text-slate-400 italic text-center">No students are currently allocated to this stream profile.</p>
+                          ) : (
+                            <div className="overflow-x-auto max-h-80 overflow-y-auto">
+                              <table className="w-full text-left border-collapse text-xs">
+                                <thead>
+                                  <tr className="border-b border-slate-200 bg-slate-50/50 text-slate-400 font-bold uppercase">
+                                    <th className="px-4 py-2.5">Admission Number</th>
+                                    <th className="px-4 py-2.5">Full Registered Name</th>
+                                  </tr>
+                                </thead>
+                                <tbody className="divide-y divide-slate-100">
+                                  {roster.map(student => (
+                                    <tr key={student.id} className="hover:bg-slate-50/40">
+                                      <td className="px-4 py-2.5 font-mono font-bold text-indigo-600">{student.admission_number}</td>
+                                      <td className="px-4 py-2.5 font-medium text-slate-700">{student.first_name} {student.last_name}</td>
+                                    </tr>
+                                  ))}
+                                </tbody>
+                              </table>
+                            </div>
+                          )}
+                        </div>
+
+                      </div>
+
+                    </div>
+                  );
+                })()
+              )}
 
             </div>
           )}
-            </div>
-          )}
 
 
 
-          {/* ================= CLASS SUBJECTS MODULE ================= */}
-
-          {activeTab === 'subjects' && (
-            <div className="bg-white p-6 rounded-xl border border-slate-200 shadow-sm">
+          {/* ================= STUDENTS MANAGEMENT & INDIVIDUAL PROFILE VIEWS ================= */}
+          {activeTab === 'students' && (
+            <div className="space-y-6">
               
-          {activeTab === 'subjects' && (
-            <div className="grid grid-cols-1 md:grid-cols-2 gap-8">
-              
-              {/* Left Wing Panel: Global Subject Inventory Creation */}
-              <div className="space-y-8">
-                <div className="bg-white p-6 rounded-xl border border-slate-200 shadow-sm">
-                  <h3 className="text-sm font-bold uppercase tracking-wider text-slate-400 mb-4">
-                    Create Global Subject Definition
-                  </h3>
-                  {/* Updated Creation Input Form */}
-                  <form onSubmit={handleAddSubject} className="space-y-4">
-                    <div>
-                      <label className="block text-xs font-semibold text-slate-600 mb-1">
-                        Subject Name
-                      </label>
-                      <input 
-                        type="text" 
-                        placeholder="e.g., Mathematics"
-                        value={newSubjectName}
-                        onChange={(e) => setNewSubjectName(e.target.value)}
-                        className="w-full bg-slate-50 border border-slate-200 rounded-lg px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-indigo-500"
+              {!selectedDetailedStudentId ? (
+                <>
+                  {/* Standard Form Header Block for Student Entry */}
+                  <div className="bg-white p-6 rounded-xl border border-slate-200 shadow-sm">
+                    <h3 className="text-sm font-bold text-slate-800 mb-4 uppercase tracking-wider">
+                      Register New Student
+                    </h3>
+                    <div className="grid grid-cols-1 sm:grid-cols-4 gap-3">
+                      <input
+                        type="text"
+                        placeholder="Admission Number"
+                        value={newAdmissionNumber}
+                        onChange={(e) => setNewAdmissionNumber(e.target.value)}
+                        className="bg-slate-50 border border-slate-200 rounded-lg px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-indigo-500"
                       />
-                    </div>
-
-                    {/* New Input Field for Subject Code */}
-                    <div>
-                      <label className="block text-xs font-semibold text-slate-600 mb-1">
-                        Subject Code
-                      </label>
-                      <input 
-                        type="text" 
-                        placeholder="e.g., MATH"
-                        value={newSubjectCode}
-                        onChange={(e) => setNewSubjectCode(e.target.value)}
-                        className="w-full bg-slate-50 border border-slate-200 rounded-lg px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-indigo-500"
+                      <input
+                        type="text"
+                        placeholder="First Name"
+                        value={newFirstName}
+                        onChange={(e) => setNewFirstName(e.target.value)}
+                        className="bg-slate-50 border border-slate-200 rounded-lg px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-indigo-500"
                       />
-                    </div>
-
-                    <button 
-                      type="submit" 
-                      className="w-full bg-indigo-600 text-white text-sm font-medium py-2 rounded-lg hover:bg-indigo-700 transition shadow-sm"
-                    >
-                      + Save to Inventory Library
-                    </button>
-                  </form>
-                </div>
-
-                {/* Sub-Panel: Subject Catalog View */}
-                <div className="bg-white p-6 rounded-xl border border-slate-200 shadow-sm">
-                  <h3 className="text-sm font-bold uppercase tracking-wider text-slate-400 mb-3">
-                    Active Subject Catalog Inventory ({subjects.length})
-                  </h3>
-                  {subjects.length === 0 ? (
-                    <p className="text-sm text-slate-500 italic">No subject catalog rows found.</p>
-                  ) : (
-                    <div className="flex flex-wrap gap-2 max-h-[220px] overflow-y-auto p-1">
-                      {subjects.map((sub) => (
-                        <span key={sub.id} className="bg-slate-100 text-slate-800 text-xs px-3 py-1.5 rounded-lg border border-slate-200 font-medium shadow-2xs">
-                          📚 {sub.name} <span className="text-slate-400 font-mono text-[10px]">#{sub.id}</span>
-                        </span>
-                      ))}
-                    </div>
-                  )}
-                </div>
-              </div>
-
-              {/* Right Wing Panel: Stream Structural Mapping Assignation */}
-              <div className="space-y-6">
-                <div className="bg-white p-6 rounded-xl border border-slate-200 shadow-sm">
-                  <h3 className="text-sm font-bold uppercase tracking-wider text-slate-400 mb-4">
-                    Map Subject to Target Class Stream
-                  </h3>
-                  <form onSubmit={handleAssignSubjectToStream} className="space-y-4">
-                    <div>
-                      <label className="block text-xs font-semibold text-slate-600 mb-1">
-                        Target Class Stream
-                      </label>
+                      <input
+                        type="text"
+                        placeholder="Last Name"
+                        value={newLastName}
+                        onChange={(e) => setNewLastName(e.target.value)}
+                        className="bg-slate-50 border border-slate-200 rounded-lg px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-indigo-500"
+                      />
                       <select
-                        value={selectedMappingStream}
-                        onChange={(e) => setSelectedMappingStream(e.target.value)}
-                        className="w-full bg-slate-50 border border-slate-200 rounded-lg px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-indigo-500"
+                        value={selectedStreamId}
+                        onChange={(e) => setSelectedStreamId(e.target.value)}
+                        className="bg-slate-50 border border-slate-200 rounded-lg px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-indigo-500"
                       >
-                        <option value="">-- Select Class --</option>
-                        {streams.map((st) => (
+                        <option value="">-- Select Stream --</option>
+                        {streams.map(st => (
                           <option key={st.id} value={st.id}>{st.name}</option>
                         ))}
                       </select>
                     </div>
-
-                    <div>
-                      <label className="block text-xs font-semibold text-slate-600 mb-1">
-                        Subject Resource
-                      </label>
-                      <select
-                        value={selectedMappingSubject}
-                        onChange={(e) => setSelectedMappingSubject(e.target.value)}
-                        className="w-full bg-slate-50 border border-slate-200 rounded-lg px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-indigo-500"
+                    <div className="mt-3 text-right">
+                      <button
+                        onClick={handleAddStudent}
+                        className="bg-indigo-600 text-white text-sm font-bold px-5 py-2 rounded-lg hover:bg-indigo-700 transition"
                       >
-                        <option value="">-- Choose Subject --</option>
-                        {subjects.map((sub) => (
-                          <option key={sub.id} value={sub.id}>{sub.name}</option>
-                        ))}
-                      </select>
+                        + Add Student
+                      </button>
+                    </div>
+                  </div>
+
+                  {/* Main Student Directory Table */}
+                  <div className="bg-white rounded-xl border border-slate-200 shadow-sm overflow-hidden">
+                    <div className="px-6 py-4 bg-slate-50 border-b border-slate-200">
+                      <h3 className="text-xs font-bold uppercase tracking-wider text-slate-500">
+                        Registered Student Directory
+                      </h3>
                     </div>
 
-                    <button 
-                      type="submit" 
-                      className="w-full bg-emerald-600 text-white text-sm font-medium py-2 rounded-lg hover:bg-emerald-700 transition shadow-sm"
-                    >
-                      ⛓️ Link Subject Configuration
-                    </button>
-                  </form>
-                </div>
+                    {students.length === 0 ? (
+                      <p className="text-sm text-slate-500 italic text-center py-8">No students listed on the platform yet.</p>
+                    ) : (
+                      <div className="overflow-x-auto">
+                        <table className="w-full text-left border-collapse text-sm">
+                          <thead>
+                            <tr className="border-b border-slate-200 bg-slate-50 text-slate-400 font-semibold text-xs uppercase">
+                              <th className="px-6 py-3">Adm Number</th>
+                              <th className="px-6 py-3">Full Name</th>
+                              <th className="px-6 py-3">Assigned Class Stream</th>
+                              <th className="px-6 py-3 text-right">Action</th>
+                            </tr>
+                          </thead>
+                          <tbody className="divide-y divide-slate-100">
+                            {students.map((student) => {
+                              const streamMatch = streams.find(st => st.id === student.stream_id);
+                              return (
+                                <tr key={student.id} className="hover:bg-slate-50/40 transition">
+                                  <td className="px-6 py-3 font-mono font-bold text-indigo-600">{student.admission_number}</td>
+                                  <td className="px-6 py-3 font-medium text-slate-800">{student.first_name} {student.last_name}</td>
+                                  <td className="px-6 py-3 text-slate-500">{streamMatch ? streamMatch.name : <span className="text-xs text-amber-500 italic">Unassigned</span>}</td>
+                                  <td className="px-6 py-3 text-right">
+                                    <button
+                                      onClick={() => setSelectedDetailedStudentId(Number(student.id))}
+                                      className="text-xs font-bold bg-slate-100 border border-slate-200 text-slate-700 px-3 py-1.5 rounded-lg hover:bg-indigo-50 hover:text-indigo-600 transition"
+                                    >
+                                      View Profile 👤
+                                    </button>
+                                  </td>
+                                </tr>
+                              );
+                            })}
+                          </tbody>
+                        </table>
+                      </div>
+                    )}
+                  </div>
+                </>
+              ) : (
+                /* ================= SINGLE STUDENT PERFORMANCE RECORD DASHBOARD ================= */
+                (() => {
+                  const targetStudent = students.find(s => s.id === selectedDetailedStudentId);
+                  if (!targetStudent) return <p className="text-sm text-red-500">Student session dropped.</p>;
 
-                {/* Grid Framework: View Curated Configurations */}
-                <div className="bg-white p-6 rounded-xl border border-slate-200 shadow-sm">
-                  <h3 className="text-sm font-bold uppercase tracking-wider text-slate-400 mb-4">
-                    Active Stream Curriculum Configurations
-                  </h3>
-                  {streams.length === 0 ? (
-                    <p className="text-sm text-slate-500 italic">Configure Class Streams first to see structural mappings.</p>
-                  ) : (
-                    <div className="space-y-4 max-h-[300px] overflow-y-auto pr-1">
-                      {streams.map((stream) => {
-                        // Find all mapping records attached to this exact stream row
-                        const activeLinks = subjectMappings.filter(m => m.stream_id === stream.id);
-                        
-                        return (
-                          <div key={stream.id} className="p-3 bg-slate-50 rounded-lg border border-slate-100 flex flex-col gap-2">
-                            <span className="text-xs font-bold text-slate-900 border-b border-slate-200 pb-1 uppercase tracking-wide">
-                              🏫 {stream.name} Curriculum Allocation
-                            </span>
-                            {activeLinks.length === 0 ? (
-                              <span className="text-xs text-slate-400 italic">No assigned subjects linked yet.</span>
-                            ) : (
-                              <div className="flex flex-wrap gap-1.5">
-                                {activeLinks.map((link) => {
-                                  // Locate the matched clear textual string from the master list
-                                  const matchingSubjectName = subjects.find(s => s.id === link.subject_id)?.name || `ID: ${link.subject_id}`;
+                  const classStream = streams.find(st => st.id === targetStudent.stream_id);
+                  const studentScores = scores.filter(sc => sc.student_id === targetStudent.id);
+
+                  return (
+                    <div className="space-y-6 animate-fadeIn">
+                      
+                      {/* Controls Breadcrumb Nav Bar */}
+                      <div className="flex items-center gap-3">
+                        <button
+                          onClick={() => setSelectedDetailedStudentId(null)}
+                          className="p-1.5 rounded-lg border border-slate-200 text-slate-500 hover:bg-slate-50 transition text-xs font-bold"
+                        >
+                          🔙 Back to Directory
+                        </button>
+                      </div>
+
+                      {/* Bio Meta Profile Card */}
+                      <div className="bg-white border border-slate-200 rounded-xl p-6 shadow-sm flex flex-col sm:flex-row justify-between items-start sm:items-center gap-4">
+                        <div>
+                          <span className="text-xs bg-indigo-50 font-mono text-indigo-700 font-bold px-2 py-0.5 rounded">
+                            {targetStudent.admission_number}
+                          </span>
+                          <h2 className="text-2xl font-black text-slate-900 mt-1">
+                            {targetStudent.first_name} {targetStudent.last_name}
+                          </h2>
+                          <p className="text-xs text-slate-400 mt-0.5">
+                            Allocated Class Unit: <strong className="text-slate-600 font-semibold">{classStream ? classStream.name : 'None'}</strong>
+                          </p>
+                        </div>
+                        <div className="bg-slate-50 rounded-lg px-4 py-2 border border-slate-200 text-center w-full sm:w-auto">
+                          <span className="text-xs font-bold text-slate-400 uppercase block tracking-wider">Subjects Taken</span>
+                          <span className="text-xl font-black text-slate-800">{studentScores.length}</span>
+                        </div>
+                      </div>
+
+                      {/* Performance Breakdown Table Grid Sheet */}
+                      <div className="bg-white rounded-xl border border-slate-200 shadow-sm overflow-hidden">
+                        <div className="px-4 py-3 bg-slate-50 border-b border-slate-200 font-bold text-xs text-slate-500 uppercase tracking-wider">
+                          Academic Subject Performance Ledger
+                        </div>
+
+                        {studentScores.length === 0 ? (
+                          <p className="p-8 text-sm text-slate-400 italic text-center">No examination scores saved for this student.</p>
+                        ) : (
+                          <div className="overflow-x-auto">
+                            <table className="w-full text-left border-collapse text-xs">
+                              <thead>
+                                <tr className="bg-slate-50/50 border-b border-slate-200 text-slate-400 font-bold uppercase">
+                                  <th className="px-4 py-3">Subject Name</th>
+                                  <th className="px-4 py-3 text-center">CAT 1 (/100)</th>
+                                  <th className="px-4 py-3 text-center">CAT 2 (/100)</th>
+                                  <th className="px-4 py-3 text-center">Final Exam (/100)</th>
+                                  <th className="px-4 py-3 text-center bg-indigo-50/40 text-indigo-700">Calculated Final Mark</th>
+                                  <th className="px-4 py-3 text-right">Letter Grade</th>
+                                </tr>
+                              </thead>
+                              <tbody className="divide-y divide-slate-100">
+                                {studentScores.map(sc => {
+                                  const sub = subjects.find(s => s.id === sc.subject_id);
+                                  const gradeMetrics = sc.final_grade !== null ? calculateGrade(sc.final_grade) : null;
+
                                   return (
-                                    <span key={link.id} className="bg-white border border-slate-200 text-slate-700 text-[11px] px-2 py-0.5 rounded-md font-medium">
-                                      {matchingSubjectName}
-                                    </span>
+                                    <tr key={sc.id} className="hover:bg-slate-50/30">
+                                      <td className="px-4 py-3 font-semibold text-slate-700">
+                                        {sub ? `${sub.name} (${sub.code})` : `Unknown Subject ID: ${sc.subject_id}`}
+                                      </td>
+                                      <td className="px-4 py-3 text-center font-mono text-slate-600">{sc.CAT_1 !== null ? `${sc.CAT_1}` : '-'}</td>
+                                      <td className="px-4 py-3 text-center font-mono text-slate-600">{sc.CAT_2 !== null ? `${sc.CAT_2}` : '-'}</td>
+                                      <td className="px-4 py-3 text-center font-mono text-slate-600">{sc.final_exam !== null ? `${sc.final_exam}` : '-'}</td>
+                                      <td className="px-4 py-3 text-center font-bold font-mono bg-indigo-50/20 text-slate-900">
+                                        {sc.final_grade !== null ? `${sc.final_grade}%` : 'Pending'}
+                                      </td>
+                                      <td className="px-4 py-3 text-right">
+                                        {gradeMetrics ? (
+                                          <span className={`text-[10px] font-extrabold px-2 py-0.5 rounded lowercase tracking-wider first-letter:uppercase font-mono ${gradeMetrics.color}`}>
+                                            Grade {gradeMetrics.grade}
+                                          </span>
+                                        ) : (
+                                          <span className="text-slate-400 italic font-normal text-[10px]">No Grade</span>
+                                        )}
+                                      </td>
+                                    </tr>
                                   );
                                 })}
-                              </div>
-                            )}
+                              </tbody>
+                            </table>
                           </div>
-                        );
-                      })}
+                        )}
+                      </div>
+
                     </div>
-                  )}
-                </div>
-              </div>
+                  );
+                })()
+              )}
 
             </div>
           )}
+
+
+          {/* ================= SUBJECTS FRAMEWORK terminal WITH EDIT & DELETE ================= */}
+          {activeTab === 'subjects' && (
+            <div className="space-y-6">
+              
+              {/* Fresh Registry Input Node Card */}
+              <div className="bg-white p-6 rounded-xl border border-slate-200 shadow-sm">
+                <h3 className="text-sm font-bold text-slate-800 mb-4 uppercase tracking-wider">
+                  Register Fresh Curriculum Subject
+                </h3>
+                <div className="flex flex-col sm:flex-row gap-3">
+                  <input
+                    type="text"
+                    placeholder="Subject Title (e.g., Mathematics, Kiswahili)"
+                    value={newSubjectName}
+                    onChange={(e) => setNewSubjectName(e.target.value)}
+                    className="flex-1 bg-slate-50 border border-slate-200 rounded-lg px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-indigo-500"
+                  />
+                  <input
+                    type="text"
+                    placeholder="Subject Code (e.g., MAT101, KIS)"
+                    value={newSubjectCode}
+                    onChange={(e) => setNewSubjectCode(e.target.value)}
+                    className="w-full sm:w-48 bg-slate-50 border border-slate-200 rounded-lg px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-indigo-500"
+                  />
+                  <button
+                    onClick={handleAddSubject}
+                    className="bg-indigo-600 text-white text-sm font-bold px-5 py-2 rounded-lg hover:bg-indigo-700 transition whitespace-nowrap"
+                  >
+                    + Register Subject
+                  </button>
+                </div>
+              </div>
+
+              {/* Subjects Directory Management Grid */}
+              <div className="bg-white rounded-xl border border-slate-200 shadow-sm overflow-hidden">
+                <div className="px-6 py-4 bg-slate-50 border-b border-slate-200">
+                  <h3 className="text-xs font-bold uppercase tracking-wider text-slate-500">
+                    Active Curriculum Catalogue
+                  </h3>
+                </div>
+
+                {subjects.length === 0 ? (
+                  <p className="text-sm text-slate-500 italic text-center py-8">No subjects listed in the catalogue.</p>
+                ) : (
+                  <div className="divide-y divide-slate-100">
+                    {subjects.map((subject) => {
+                      const isEditing = editingSubjectId === subject.id;
+
+                      return (
+                        <div key={subject.id} className="p-4 flex flex-col sm:flex-row sm:items-center justify-between gap-3 hover:bg-slate-50/50 transition">
+                          
+                          {isEditing ? (
+                            /* Inline Active Input Editors Form Row */
+                            <div className="flex-1 flex flex-col sm:flex-row gap-2">
+                              <input
+                                type="text"
+                                value={editSubjectName}
+                                onChange={(e) => setEditSubjectName(e.target.value)}
+                                className="flex-1 bg-white border border-indigo-300 rounded px-2 py-1 text-sm focus:outline-none font-medium"
+                              />
+                              <input
+                                type="text"
+                                value={editSubjectCode}
+                                onChange={(e) => setEditSubjectCode(e.target.value)}
+                                className="w-full sm:w-32 bg-white border border-indigo-300 rounded px-2 py-1 text-sm font-mono uppercase focus:outline-none"
+                              />
+                            </div>
+                          ) : (
+                            /* Standard View Output Text Display Row */
+                            <div>
+                              <h4 className="font-semibold text-slate-800 text-sm flex items-center gap-2">
+                                {subject.name}
+                                <span className="font-mono bg-slate-100 border border-slate-200 px-1.5 py-0.5 rounded text-xs text-slate-500 font-bold">
+                                  {subject.code}
+                                </span>
+                              </h4>
+                            </div>
+                          )}
+
+                          {/* Control Action Buttons Row */}
+                          <div className="flex items-center gap-2 justify-end">
+                            {isEditing ? (
+                              <>
+                                <button
+                                  onClick={() => handleUpdateSubject(Number(subject.id))}
+                                  className="bg-emerald-600 text-white text-xs font-bold px-3 py-1.5 rounded-lg hover:bg-emerald-700 transition"
+                                >
+                                  Save Change
+                                </button>
+                                <button
+                                  onClick={() => setEditingSubjectId(null)}
+                                  className="bg-slate-200 text-slate-700 text-xs font-semibold px-3 py-1.5 rounded-lg hover:bg-slate-300 transition"
+                                >
+                                  Cancel
+                                </button>
+                              </>
+                            ) : (
+                              <>
+                                <button
+                                  onClick={() => {
+                                    setEditingSubjectId(Number(subject.id));
+                                    setEditSubjectName(subject.name);
+                                    setEditSubjectCode(subject.code);
+                                  }}
+                                  className="text-xs font-semibold text-indigo-600 bg-indigo-50 border border-indigo-100 px-3 py-1.5 rounded-lg hover:bg-indigo-600 hover:text-white transition"
+                                >
+                                  Edit Info
+                                </button>
+                                <button
+                                  onClick={() => handleDeleteSubject(Number(subject.id))}
+                                  className="text-xs font-semibold text-rose-600 bg-rose-50 border border-rose-100 px-3 py-1.5 rounded-lg hover:bg-rose-600 hover:text-white transition"
+                                >
+                                  Delete
+                                </button>
+                              </>
+                            )}
+                          </div>
+
+                        </div>
+                      );
+                    })}
+                  </div>
+                )}
+              </div>
+
             </div>
           )}
 
