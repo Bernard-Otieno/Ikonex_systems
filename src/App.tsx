@@ -314,83 +314,98 @@ export default function App() {
   // 3. Submits typed academic score for a specific student and subject combo directly to Supabase
  // Submits typed academic score for a specific student, subject, and CA type combo to Supabase
 // Processes grades, compiles weights, and saves numeric marks directly to the database
-  const handleSaveSingleScore = async (studentId: number) => {
+
+
+const handleSaveSingleScore = async (studentId: number) => {
     if (!selectedScoreSubject) {
-      alert("Please choose an active subject framework.");
+      alert("Please choose a subject scope before attempting to update grades.");
       return;
     }
 
-    // Capture raw values from frontend input text fields
+    // 1. Gather raw inputs from active editing states
     const rawCat1 = editingCAT1[studentId];
     const rawCat2 = editingCAT2[studentId];
     const rawExam = editingFinalExam[studentId];
 
-    // Find if a record exists for this Student + Subject combo
-    const existingEntry = scores.find(
-      s => s.student_id === studentId && s.subject_id === Number(selectedScoreSubject)
+    // Find the current record using the Score interface definition
+    const existingRecord: Score | undefined = scores.find(
+      (sc: Score) => sc.student_id === studentId && sc.subject_id === Number(selectedScoreSubject)
     );
 
-    // Fallback gracefully to existing data values if input cell is untouched
-    const cat1Value = rawCat1 !== undefined && rawCat1.trim() !== '' ? Number(rawCat1) : (existingEntry ? existingEntry.CAT_1 : null);
-    const cat2Value = rawCat2 !== undefined && rawCat2.trim() !== '' ? Number(rawCat2) : (existingEntry ? existingEntry.CAT_2 : null);
-    const examValue = rawExam !== undefined && rawExam.trim() !== '' ? Number(rawExam) : (existingEntry ? existingEntry.final_exam : null);
+    // 2. Resolve final evaluation strings (Active typed value -> Existing baseline -> blank fallback)
+    const finalStrCat1 = rawCat1 !== undefined ? rawCat1 : (existingRecord && existingRecord.CAT_1 !== null ? String(existingRecord.CAT_1) : '');
+    const finalStrCat2 = rawCat2 !== undefined ? rawCat2 : (existingRecord && existingRecord.CAT_2 !== null ? String(existingRecord.CAT_2) : '');
+    const finalStrExam = rawExam !== undefined ? rawExam : (existingRecord && existingRecord.final_exam !== null ? String(existingRecord.final_exam) : '');
 
-    // Guard Check: Ensure marks fall within realistic bounds
-    if ((cat1Value !== null && (cat1Value < 0 || cat1Value > 100)) ||
-        (cat2Value !== null && (cat2Value < 0 || cat2Value > 100)) ||
-        (examValue !== null && (examValue < 0 || examValue > 100))) {
-      alert("Please ensure score properties fall strictly between 0 and 100 marks.");
+    // 3. Validation Rules Rulebook Block
+    if (!finalStrCat1.trim() || !finalStrCat2.trim() || !finalStrExam.trim()) {
+      alert("Validation Error: All assessment vectors (CAT 1, CAT 2, and Final Exam) must be filled out before saving this row.");
       return;
     }
 
-    // Engine Formulation Logic to determine the numerical final mark total out of 100%
-    let finalNumericTotal: number | null = null;
-    if (cat1Value !== null || cat2Value !== null || examValue !== null) {
-      const cat1Safe = cat1Value ?? 0;
-      const cat2Safe = cat2Value ?? 0;
-      const activeCatCount = (cat1Value !== null ? 1 : 0) + (cat2Value !== null ? 1 : 0);
-      const catAverageOutOf100 = activeCatCount > 0 ? (cat1Safe + cat2Safe) / activeCatCount : 0;
-      const catComponent = (catAverageOutOf100 / 100) * 15; // Max 15 marks
+    const numCat1 = Number(finalStrCat1);
+    const numCat2Corrected = Number(finalStrCat2);
+    const numExam = Number(finalStrExam);
 
-      const examSafe = examValue ?? 0;
-      const examComponent = (examSafe / 100) * 85; // Max 85 marks
-
-      finalNumericTotal = Math.round(catComponent + examComponent);
+    // Validate that inputs are actual numeric digits
+    if (isNaN(numCat1) || isNaN(numCat2Corrected) || isNaN(numExam)) {
+      alert("Validation Error: Score parameters must be valid numeric digits.");
+      return;
     }
 
-    // Payload configuration utilizing the updated numeric column system
-    const payload = {
-      student_id: studentId,
-      subject_id: Number(selectedScoreSubject),
-      CAT_1: cat1Value,
-      CAT_2: cat2Value,
-      final_exam: examValue,
-      final_grade: finalNumericTotal // Numeric value saved directly for student ranking operations
-    };
+    // Validate ranges explicitly are between 0 and 100
+    if (numCat1 < 0 || numCat1 > 100) {
+      alert(`Validation Error: CAT 1 mark (${numCat1}) falls out of bounds. Must be a value from 0 to 100.`);
+      return;
+    }
+    if (numCat2Corrected < 0 || numCat2Corrected > 100) {
+      alert(`Validation Error: CAT 2 mark (${numCat2Corrected}) falls out of bounds. Must be a value from 0 to 100.`);
+      return;
+    }
+    if (numExam < 0 || numExam > 100) {
+      alert(`Validation Error: Final Exam mark (${numExam}) falls out of bounds. Must be a value from 0 to 100.`);
+      return;
+    }
 
-    if (existingEntry) {
-      // Operation: UPDATE operation on matching record row
-      const { error } = await supabase
-        .from('scores')
-        .update({
-          CAT_1: cat1Value,
-          CAT_2: cat2Value,
-          final_exam: examValue,
-          final_grade: finalNumericTotal
-        })
-        .eq('id', existingEntry.id);
+    // 4. Compute Weighted Grades (CATs averaged out of 100 -> 15%, Exam out of 100 -> 85%)
+    const catAverage = (numCat1 + numCat2Corrected) / 2;
+    const weightedCat = (catAverage / 100) * 15;
+    const weightedExam = (numExam / 100) * 85;
+    const totalCalculatedGrade = Math.round(weightedCat + weightedExam);
 
-      if (error) alert(`Update Error: ${error.message}`);
+    // 5. Fire Upsert Query safely to Supabase with validated types match
+    const { error } = await supabase
+      .from('scores')
+      .upsert({
+        student_id: studentId,
+        subject_id: Number(selectedScoreSubject),
+        "CAT_1": numCat1,
+        "CAT_2": numCat2Corrected,
+        final_exam: numExam,
+        final_grade: totalCalculatedGrade
+      }, {
+        onConflict: 'student_id,subject_id'
+      });
+
+    if (error) {
+      alert(`Database Submission Error: ${error.message}`);
     } else {
-      // Operation: INSERT completely new score matrix row
-      const { error } = await supabase
-        .from('scores')
-        .insert([payload]);
+      // Clear current row editing local state triggers to show clean updated database data
+      const updatedEditingCat1 = { ...editingCAT1 };
+      const updatedEditingCat2 = { ...editingCAT2 };
+      const updatedEditingExam = { ...editingFinalExam };
+      
+      delete updatedEditingCat1[studentId];
+      delete updatedEditingCat2[studentId];
+      delete updatedEditingExam[studentId];
 
-      if (error) alert(`Insert Error: ${error.message}`);
+      setEditingCAT1(updatedEditingCat1);
+      setEditingCAT2(updatedEditingCat2);
+      setEditingFinalExam(updatedEditingExam);
+
+      alert("Row scores evaluated and successfully committed to database!");
+      fetchScores(); // Synchronize view state layout
     }
-
-    fetchScores(); // Sync local state memory layout
   };
 
 
@@ -816,26 +831,135 @@ const handleAddStudent = async () => {
                               <th className="px-6 py-3 text-right">Action</th>
                             </tr>
                           </thead>
-                          <tbody className="divide-y divide-slate-100">
-                            {students.map((student) => {
-                              const streamMatch = streams.find(st => st.id === student.stream_id);
-                              return (
-                                <tr key={student.id} className="hover:bg-slate-50/40 transition">
-                                  <td className="px-6 py-3 font-mono font-bold text-indigo-600">{student.admission_number}</td>
-                                  <td className="px-6 py-3 font-medium text-slate-800">{student.first_name} {student.last_name}</td>
-                                  <td className="px-6 py-3 text-slate-500">{streamMatch ? streamMatch.name : <span className="text-xs text-amber-500 italic">Unassigned</span>}</td>
-                                  <td className="px-6 py-3 text-right">
-                                    <button
-                                      onClick={() => setSelectedDetailedStudentId(Number(student.id))}
-                                      className="text-xs font-bold bg-slate-100 border border-slate-200 text-slate-700 px-3 py-1.5 rounded-lg hover:bg-indigo-50 hover:text-indigo-600 transition"
-                                    >
-                                      View Profile 👤
-                                    </button>
-                                  </td>
-                                </tr>
-                              );
-                            })}
-                          </tbody>
+                            <tbody className="divide-y divide-slate-100 bg-white">
+                    {students.map((student) => {
+                      // Find a previously recorded database row matching this student + subject combination with exact Score typing
+                      const existingRecord: Score | undefined = scores.find(
+                        (sc: Score) => sc.student_id === student.id && sc.subject_id === Number(selectedScoreSubject)
+                      );
+
+                      // Form state selectors: prioritize active typing edits, fallback to existing saved numbers, or default to an empty string
+                      const valCat1 = editingCAT1[student.id] !== undefined 
+                        ? editingCAT1[student.id] 
+                        : (existingRecord && existingRecord.CAT_1 !== null ? String(existingRecord.CAT_1) : '');
+
+                      const valCat2 = editingCAT2[student.id] !== undefined 
+                        ? editingCAT2[student.id] 
+                        : (existingRecord && existingRecord.CAT_2 !== null ? String(existingRecord.CAT_2) : '');
+
+                      const valExam = editingFinalExam[student.id] !== undefined 
+                        ? editingFinalExam[student.id] 
+                        : (existingRecord && existingRecord.final_exam !== null ? String(existingRecord.final_exam) : '');
+
+                      // Parse input states to determine live evaluation metrics
+                      const numCat1 = valCat1.trim() !== '' ? Number(valCat1) : null;
+                      const numCat2 = valCat2.trim() !== '' ? Number(valCat2) : null;
+                      const numExam = valExam.trim() !== '' ? Number(valExam) : null;
+
+                      let liveFinalMarkPreview = "Pending";
+                      let liveGradeIndicator = "";
+
+                      // Compute live calculations if all 3 fields are currently populated by the teacher
+                      if (numCat1 !== null && !isNaN(numCat1) && numCat2 !== null && !isNaN(numCat2) && numExam !== null && !isNaN(numExam)) {
+                        const catAverage = (numCat1 + numCat2) / 2;
+                        const weightedCat = (catAverage / 100) * 15;
+                        const weightedExam = (numExam / 100) * 85;
+                        const computedTotal = Math.round(weightedCat + weightedExam);
+                        liveFinalMarkPreview = `${computedTotal}%`;
+                        liveGradeIndicator = `Grade ${calculateGrade(computedTotal).grade}`;
+                      } 
+                      // Fallback to displaying saved values directly from database if fields are left untouched
+                      else if (existingRecord && existingRecord.final_grade !== null) {
+                        liveFinalMarkPreview = `${existingRecord.final_grade}%`;
+                        liveGradeIndicator = `Grade ${calculateGrade(existingRecord.final_grade).grade}`;
+                      }
+
+                      return (
+                        <tr key={student.id} className="hover:bg-slate-50/50 transition border-b border-slate-100">
+                          <td className="px-4 py-3 font-mono font-bold text-indigo-600">
+                            {student.admission_number}
+                          </td>
+                          <td className="px-4 py-3 font-medium text-slate-800">
+                            {student.first_name} {student.last_name}
+                          </td>
+                          
+                          {/* CAT 1 Entry Input Column */}
+                          <td className="px-3 py-2">
+                            <div className="relative rounded-lg">
+                              <input
+                                type="number"
+                                min="0"
+                                max="100"
+                                placeholder="0-100"
+                                value={valCat1}
+                                onChange={(e) => setEditingCAT1({ ...editingCAT1, [student.id]: e.target.value })}
+                                className="w-full bg-slate-50 border border-slate-200 rounded-lg pl-2.5 pr-9 py-1.5 text-sm font-medium focus:outline-none focus:ring-2 focus:ring-indigo-500 transition"
+                              />
+                              <span className="absolute right-2 top-2 text-[10px] font-bold text-slate-400 select-none">/100</span>
+                            </div>
+                          </td>
+
+                          {/* CAT 2 Entry Input Column */}
+                          <td className="px-3 py-2">
+                            <div className="relative rounded-lg">
+                              <input
+                                type="number"
+                                min="0"
+                                max="100"
+                                placeholder="0-100"
+                                value={valCat2}
+                                onChange={(e) => setEditingCAT2({ ...editingCAT2, [student.id]: e.target.value })}
+                                className="w-full bg-slate-50 border border-slate-200 rounded-lg pl-2.5 pr-9 py-1.5 text-sm font-medium focus:outline-none focus:ring-2 focus:ring-indigo-500 transition"
+                              />
+                              <span className="absolute right-2 top-2 text-[10px] font-bold text-slate-400 select-none">/100</span>
+                            </div>
+                          </td>
+
+                          {/* Final Examination Entry Input Column */}
+                          <td className="px-3 py-2">
+                            <div className="relative rounded-lg">
+                              <input
+                                type="number"
+                                min="0"
+                                max="100"
+                                placeholder="0-100"
+                                value={valExam}
+                                onChange={(e) => setEditingFinalExam({ ...editingFinalExam, [student.id]: e.target.value })}
+                                className="w-full bg-slate-50 border border-slate-200 rounded-lg pl-2.5 pr-9 py-1.5 text-sm font-medium focus:outline-none focus:ring-2 focus:ring-indigo-500 transition"
+                              />
+                              <span className="absolute right-2 top-2 text-[10px] font-bold text-slate-400 select-none">/100</span>
+                            </div>
+                          </td>
+
+                          {/* Live Weighted Calculation Preview Indicator column */}
+                          <td className="px-4 py-3 text-center font-bold font-mono text-slate-800 bg-slate-50/40">
+                            {liveFinalMarkPreview}
+                          </td>
+
+                          {/* Dynamic Letter Grade Badge indicator Column */}
+                          <td className="px-4 py-3 text-center">
+                            {liveGradeIndicator ? (
+                              <span className="text-[10px] bg-indigo-50 text-indigo-700 border border-indigo-100 px-2.5 py-0.5 rounded-md font-extrabold tracking-wide uppercase font-mono">
+                                {liveGradeIndicator}
+                              </span>
+                            ) : (
+                              <span className="text-slate-400 italic font-normal text-[11px] tracking-wide">Awaiting Marks</span>
+                            )}
+                          </td>
+
+                          {/* Interactive Single Row Verification Action Trigger */}
+                          <td className="px-4 py-2 text-right">
+                            <button
+                              onClick={() => handleSaveSingleScore(Number(student.id))}
+                              className="bg-indigo-600 text-white text-xs font-bold px-4 py-1.5 rounded-lg hover:bg-indigo-700 active:scale-98 transition duration-150"
+                            >
+                              Save Row
+                            </button>
+                          </td>
+                        </tr>
+                      );
+                    })}
+                            </tbody>
                         </table>
                       </div>
                     )}
