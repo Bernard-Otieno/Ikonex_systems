@@ -1,5 +1,7 @@
-import { useState, useEffect } from 'react';
+import { useState, useEffect, useRef } from 'react';
 import { supabase } from './supabaseClient'; // Connected to your Supabase credentials
+import { useReactToPrint } from 'react-to-print';
+import { ReportCard } from './ReportCard';
 
 // ==========================================
 // SECTION 1: DATA TYPES & SCHEMAS
@@ -117,7 +119,9 @@ export default function App() {
     fetchSubjects();
     fetchSubjectMappings();
     fetchScores();
-  }, []);
+ 
+  }, []);   
+ 
 
   const handleAddStream = async (e: React.FormEvent) => {
     e.preventDefault();
@@ -562,6 +566,60 @@ const handleSaveSingleScore = async (studentId: number) => {
 };
 
 
+  const downloadAllReports = () => {
+  students.forEach(student => {
+    // 1. Filter scores for this specific student
+    const studentScores = scores.filter(s => s.student_id === student.id);
+    
+    // 2. Find their stream name
+    const stream = streams.find(s => s.id === student.stream_id)?.name || "N/A";
+    
+    // 3. Trigger the generation logic
+    // You can use a library like 'jspdf' or 'react-to-print' 
+    // to trigger the PDF download in the browser.
+    initiatePrint(student);
+    
+  });
+  
+};
+  
+// Inside your component
+const [printingStudent, setPrintingStudent] = useState<any>(null);
+const printRef = useRef(null);
+
+const handlePrint = useReactToPrint({
+  contentRef: printRef,
+  documentTitle: `ReportCard_${printingStudent?.first_name}`,
+  suppressErrors: false, // <--- Change this to false
+});
+
+// The function to trigger the flow
+const initiatePrint = (student: any) => {
+  setPrintingStudent(student);
+  // Small timeout to allow state to update and component to mount
+  setTimeout(() => {
+    if (printRef.current) {
+      handlePrint();
+    }
+  }, 500);  
+  setPrintingStudent(student);
+  setShouldPrint(true); // This kicks off the useEffect
+};
+
+const [shouldPrint, setShouldPrint] = useState(false);
+
+ useEffect(() => {
+  if (shouldPrint && printRef.current) {
+    handlePrint();
+    setShouldPrint(false); // Reset the trigger
+  }
+}, [shouldPrint]);
+
+
+
+
+
+
 
 
 
@@ -888,6 +946,7 @@ const handleSaveSingleScore = async (studentId: number) => {
                             <th className="px-4 py-3">Full Name</th>
                             <th className="px-4 py-3">Stream</th>
                             <th className="px-4 py-3 text-right">Actions</th>
+                            <th className="px-4 py-3 text-right">Report</th>
                           </tr>
                         </thead>
                         <tbody className="divide-y divide-slate-100">
@@ -896,9 +955,21 @@ const handleSaveSingleScore = async (studentId: number) => {
                               <td className="px-4 py-3 font-mono font-bold text-indigo-600">{student.admission_number}</td>
                               <td className="px-4 py-3 font-medium">{student.first_name} {student.last_name}</td>
                               <td className="px-4 py-3 text-slate-600">{streams.find(s => s.id === student.stream_id)?.name}</td>
-                              <td className="px-4 py-3 text-right space-x-2">
+                              
+                              {/* COMBINED ACTIONS COLUMN */}
+                              <td className="px-4 py-3 text-right space-x-3">
                                 <button onClick={() => handleEditStudentClick(student)} className="text-indigo-600 hover:underline font-bold">Edit</button>
                                 <button onClick={() => handleDeleteStudent(student.id)} className="text-red-600 hover:underline font-bold">Delete</button>
+                              </td>
+                              
+                              {/* REPORT COLUMN */}
+                              <td className="px-4 py-3 text-right">
+                                <button 
+                                  onClick={() => initiatePrint(student)} 
+                                  className="text-emerald-600 hover:underline font-bold text-xs"
+                                >
+                                  Print Report
+                                </button>
                               </td>
                             </tr>
                           ))}
@@ -1413,6 +1484,29 @@ const handleSaveSingleScore = async (studentId: number) => {
               })}
             </div>
           )}
+          {/* The bridge is ALWAYS in the DOM, just hidden visually */}
+          <div style={{ display: "none" }}>
+            {printingStudent && (
+              <ReportCard 
+                ref={printRef} 
+                student={printingStudent}  
+                streams={streams}
+                scores={scores
+                              .filter((s) => s.student_id === printingStudent.id)
+                              .map((s) => {
+                                const subject = subjects.find((sub) => sub.id === s.subject_id);
+                                return {
+                                  ...s,
+                                  subject_name: subject?.name || "Unknown",
+                                  cat1: s.CAT_1 ?? 0, 
+                                  cat2: s.CAT_2 ?? 0,
+                                  exam: s.final_exam ?? 0,
+                                  final_grade: s.final_grade ?? 0
+                                };
+                              })}
+              />
+            )}
+          </div>
          </main>
       </div>
     </div>
