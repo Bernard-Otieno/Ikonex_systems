@@ -75,7 +75,7 @@ export default function App() {
   // --- SELECTION DROPDOWN STATE FOR NEW STUDENT ASSIGNMENT ---
   const [selectedStreamId, setSelectedStreamId] = useState<number | null>(null);
   // Dedicated state for new student registration stream assignment 
-  const [registrationStreamId, setRegistrationStreamId] = useState<string>('');
+  // const [registrationStreamId, setRegistrationStreamId] = useState<string>('');
 
   // --- SUBJECT INPUT FORM STATES ---
   const [newSubjectName, setNewSubjectName] = useState(''); // Stores the typed name for a brand new subject
@@ -87,7 +87,7 @@ export default function App() {
   const [scores, setScores] = useState<Score[]>([]); // Array containing all recorded student score
 
   // --- FILTERS & ENTRY CONTROL STATES ---
-  const [selectedScoreStream, setSelectedScoreStream] = useState('');   // Filter: Selected Class Stream
+  // const [selectedScoreStream, setSelectedScoreStream] = useState('');   // Filter: Selected Class Stream
   const [selectedScoreSubject, setSelectedScoreSubject] = useState<string | null>(null); // Filter: Selected Subject
   
   // --- STATE REGISTERS FOR THE RECONFIGURED ASSESSMENT COLUMNS ---
@@ -97,9 +97,9 @@ export default function App() {
   // --- TRACKER STATE FOR DETAILED STUDENT PROFILE VIEWING ---
   const [selectedDetailedStudentId, setSelectedDetailedStudentId] = useState<number | null>(null);
   // --- SUB-ENTRY FORM FOR NEW REGISTRATIONS (IF NOT YET APPLIED) ---
-  const [newAdmissionNumber, setNewAdmissionNumber] = useState<string>('');
-  const [newFirstName, setNewFirstName] = useState<string>('');
-  const [newLastName, setNewLastName] = useState<string>('');
+  // const [newAdmissionNumber, setNewAdmissionNumber] = useState<string>('');
+  // const [newFirstName, setNewFirstName] = useState<string>('');
+  // const [newLastName, setNewLastName] = useState<string>('');
   // --- INLINE SUBJECT EDITING REGISTERS ---
   const [editingSubjectId, setEditingSubjectId] = useState<number | null>(null);
   const [editSubjectName, setEditSubjectName] = useState<string>('');
