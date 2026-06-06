@@ -47,7 +47,7 @@ interface Score {
 
 export default function App() {
   // Navigation active tab controller
-  const [activeTab, setActiveTab] = useState<'streams' | 'students' | 'subjects' | 'scores'>('streams');
+  const [activeTab, setActiveTab] = useState<'streams' | 'students' | 'subjects' | 'scores' | 'rankings'>('streams');
   // --- TRACKER STATE FOR DETAILED STREAM VIEWING ---
   const [selectedDetailedStreamId, setSelectedDetailedStreamId] = useState<number | null>(null);
 
@@ -71,7 +71,9 @@ export default function App() {
   const [subjects, setSubjects] = useState<Subject[]>([]); // Array list for all subjects in the library
   const [subjectMappings, setSubjectMappings] = useState<SubjectStreamMapping[]>([]); // Array list tracking active assignments
   // --- SELECTION DROPDOWN STATE FOR NEW STUDENT ASSIGNMENT ---
-  const [selectedStreamId, setSelectedStreamId] = useState<string>('');
+  const [selectedStreamId, setSelectedStreamId] = useState<number | null>(null);
+  // Dedicated state for new student registration stream assignment 
+  const [registrationStreamId, setRegistrationStreamId] = useState<string>('');
 
   // --- SUBJECT INPUT FORM STATES ---
   const [newSubjectName, setNewSubjectName] = useState(''); // Stores the typed name for a brand new subject
@@ -84,7 +86,7 @@ export default function App() {
 
   // --- FILTERS & ENTRY CONTROL STATES ---
   const [selectedScoreStream, setSelectedScoreStream] = useState('');   // Filter: Selected Class Stream
-  const [selectedScoreSubject, setSelectedScoreSubject] = useState(''); // Filter: Selected Subject
+  const [selectedScoreSubject, setSelectedScoreSubject] = useState<string | null>(null); // Filter: Selected Subject
   
   // --- STATE REGISTERS FOR THE RECONFIGURED ASSESSMENT COLUMNS ---
   const [editingCAT1, setEditingCAT1] = useState<{ [studentId: number]: string }>({});
@@ -140,49 +142,44 @@ export default function App() {
 
 
   // Handles saving a student record (Both new registrations and existing profile updates)
-  const handleSaveStudent = async (e: React.FormEvent) => {
+const handleSaveStudent = async (e: React.FormEvent) => {
     e.preventDefault();
-    const { admission_number, first_name, last_name, stream_id } = studentForm;
-    
-    // Quick validation check
-    if (!admission_number.trim() || !first_name.trim() || !last_name.trim() || !stream_id) {
-      alert("Please populate all fields to save the student profile.");
-      return;
-    }
 
-    if (isEditingStudent && studentForm.id) {
-      // Operation: UPDATE an existing record
-      const { error } = await supabase
+    // Ensure we are working with the latest form data
+    const studentData = {
+      admission_number: studentForm.admission_number,
+      first_name: studentForm.first_name,
+      last_name: studentForm.last_name,
+      // Convert the string back to a number for Supabase
+      stream_id: Number(studentForm.stream_id) 
+    };
+
+    let error;
+    if (studentForm.id !== 0) {
+      // Perform an update if an ID exists
+      const res = await supabase
         .from('students')
-        .update({ 
-          admission_number: admission_number.trim(), 
-          first_name: first_name.trim(), 
-          last_name: last_name.trim(), 
-          stream_id: Number(stream_id) 
-        })
+        .update(studentData)
         .eq('id', studentForm.id);
-      
-      if (error) alert(`Error updating: ${error.message}`);
+      error = res.error;
     } else {
-      // Operation: INSERT a new registration record
-      const { error } = await supabase
+      // Perform an insert if no ID
+      const res = await supabase
         .from('students')
-        .insert([{ 
-          admission_number: admission_number.trim(), 
-          first_name: first_name.trim(), 
-          last_name: last_name.trim(), 
-          stream_id: Number(stream_id) 
-        }]);
-      
-      if (error) alert(`Error registering student: ${error.message}`);
+        .insert([studentData]);
+      error = res.error;
     }
 
-    // Reset form states and refresh directory list from database
-    setStudentForm({ id: null, admission_number: '', first_name: '', last_name: '', stream_id: '' });
-    setIsEditingStudent(false);
-    fetchStudents();
+    if (error) {
+      alert(`Error saving student: ${error.message}`);
+    } else {
+      alert("Student record saved successfully!");
+      setIsEditingStudent(false);
+      // Reset form
+      setStudentForm({ id: 0, admission_number: '', first_name: '', last_name: '', stream_id: '' });
+      fetchStudents(); // Refresh the list
+    }
   };
-
 
   // Fills the input form fields with an existing student's data to allow modifications
   const handleEditStudentClick = (student: Student) => {
@@ -303,7 +300,8 @@ export default function App() {
   };
 
   // 2. Automated Grading Engine utility function
-  const calculateGrade = (mark: number) => {
+  const calculateGrade = (score: Score) => {
+    const mark = score.final_grade ?? 0;
     if (mark >= 80) return { grade: 'A', color: 'text-emerald-600 bg-emerald-50' };
     if (mark >= 70) return { grade: 'B', color: 'text-teal-600 bg-teal-50' };
     if (mark >= 60) return { grade: 'C', color: 'text-blue-600 bg-blue-50' };
@@ -402,6 +400,7 @@ const handleSaveSingleScore = async (studentId: number) => {
       setEditingCAT1(updatedEditingCat1);
       setEditingCAT2(updatedEditingCat2);
       setEditingFinalExam(updatedEditingExam);
+      setSelectedDetailedStudentId(null);
 
       alert("Row scores evaluated and successfully committed to database!");
       fetchScores(); // Synchronize view state layout
@@ -409,10 +408,47 @@ const handleSaveSingleScore = async (studentId: number) => {
   };
 
 
+// --- INLINE EDIT TOGGLE HOOK FOR SAVED REGISTRY ROWS ---
+  // Copies the database record parameters back to the active tracking maps
+  const startEditingSavedScore = (score: Score) => {
+    setEditingCAT1(prev => ({ ...prev, [score.student_id]: score.CAT_1 !== null ? String(score.CAT_1) : '' }));
+    setEditingCAT2(prev => ({ ...prev, [score.student_id]: score.CAT_2 !== null ? String(score.CAT_2) : '' }));
+    setEditingFinalExam(prev => ({ ...prev, [score.student_id]: score.final_exam !== null ? String(score.final_exam) : '' }));
+    
+    // Use your declared profile tracker variable to toggle inline view mode to input fields
+    setSelectedDetailedStudentId(score.student_id);
+  };
+
+  // --- CANCEL INLINE EDIT HOOK ---
+  const cancelEditingSavedScore = (studentId: number) => {
+    setSelectedDetailedStudentId(null);
+    
+    setEditingCAT1(prev => { const n = { ...prev }; delete n[studentId]; return n; });
+    setEditingCAT2(prev => { const n = { ...prev }; delete n[studentId]; return n; });
+    setEditingFinalExam(prev => { const n = { ...prev }; delete n[studentId]; return n; });
+  };
+
+  // --- DELETE EXPLICIT ROW FROM THE SCORES REGISTRY ---
+  // const handleDeleteSingleScore = async (scoreId: number) => {
+  //   if (!confirm("Are you sure you want to permanently delete this student's grade record from the system ledger?")) return;
+
+  //   const { error } = await supabase
+  //     .from('scores')
+  //     .delete()
+  //     .eq('id', scoreId);
+
+  //   if (error) {
+  //     alert(`Database Deletion Error: ${error.message}`);
+  //   } else {
+  //     alert("Score record removed successfully from database ledger.");
+  //     fetchScores(); // Synchronize view state layout using your native fetch engine
+  //   }
+  // };
+
+  
+
   // Performs client-side array filtering based on the stream filtering dropdown choice
-  const filteredStudents = selectedStreamFilter === 'all' 
-    ? students 
-    : students.filter(s => String(s.stream_id) === selectedStreamFilter);
+  const filteredStudents = selectedStreamFilter === 'all' ? students : students.filter(s => String(s.stream_id) === selectedStreamFilter);
 
   // Reads the master class stream rows from your database
   const fetchStreams = async () => {
@@ -430,31 +466,32 @@ const handleSaveSingleScore = async (studentId: number) => {
     setLoading(false);
   };
 
-const handleAddStudent = async () => {
-    if (!newAdmissionNumber.trim() || !newFirstName.trim() || !newLastName.trim() || !selectedStreamId) {
-      alert("Please fill out all student registration fields completely.");
-      return;
-    }
+// const handleAddStudent = async () => {
+//     if (!newAdmissionNumber.trim() || !newFirstName.trim() || !newLastName.trim() || !registrationStreamId) {
+//       alert("Please fill out all student registration fields completely.");
+//       return;
+//     }
 
-    const { error } = await supabase
-      .from('students')
-      .insert([{
-        admission_number: newAdmissionNumber.trim().toUpperCase(),
-        first_name: newFirstName.trim(),
-        last_name: newLastName.trim(),
-        stream_id: Number(selectedStreamId)
-      }]);
+//     const { error } = await supabase
+//       .from('students')
+//       .insert([{
+//         admission_number: newAdmissionNumber.trim().toUpperCase(),
+//         first_name: newFirstName.trim(),
+//         last_name: newLastName.trim(),
+//         stream_id: Number(registrationStreamId) // Uses the new unlinked state variable
+//       }]);
 
-    if (error) {
-      alert(`Registration Error: ${error.message}`);
-    } else {
-      // Clear input form values upon successful creation
-      setNewAdmissionNumber('');
-      setNewFirstName('');
-      setNewLastName('');
-      fetchStudents(); // Sync local screen memory layout
-    }
-  };
+//     if (error) {
+//       alert(`Registration Error: ${error.message}`);
+//     } else {
+//       // Clear input form values upon successful creation
+//       setNewAdmissionNumber('');
+//       setNewFirstName('');
+//       setNewLastName('');
+//       setRegistrationStreamId(''); // Resets the dropdown back to "-- Choose Stream --" safely
+//       fetchStudents(); // Sync local screen memory layout
+//     }
+//   };
 // --- OPERATIONS FOR CURRICULUM SUBJECT ENTRIES ---
 
   // PUT Operation: Amends updated titles/codes on a specific subject index
@@ -502,8 +539,27 @@ const handleAddStudent = async () => {
   };
 
 
-
-
+  const getRankedStudents = (studentsInStream: Student[], scores: Score[]) => {
+    return studentsInStream
+      .map(student => {
+        // Find the student's score in the specific stream
+        const score = scores.find(s => s.student_id === student.id);
+        return {
+          ...student,
+          final_grade: score?.final_grade ?? 0
+        };
+      })
+      .sort((a, b) => b.final_grade - a.final_grade); // Sort descending
+  };
+  const getRankingsByStream = (streamId: number) => {
+  return students
+    .filter(s => s.stream_id === streamId)
+    .map(student => {
+      const score = scores.find(s => s.student_id === student.id);
+      return { ...student, final_grade: score?.final_grade ?? 0 };
+    })
+    .sort((a, b) => b.final_grade - a.final_grade);
+};
 
 
 
@@ -553,6 +609,12 @@ const handleAddStudent = async () => {
             className={`w-full flex items-center space-x-3 px-4 py-3 rounded-lg text-sm transition ${activeTab === 'scores' ? 'bg-indigo-600 font-semibold text-white' : 'text-slate-400 hover:bg-slate-800 hover:text-white'}`}
           >
             <span>📝</span> <span>Scores & Grading</span>
+          </button>
+          <button 
+            onClick={() => setActiveTab('rankings')} 
+            className={`w-full flex items-center space-x-3 px-4 py-3 rounded-lg text-sm transition ${activeTab === 'rankings' ? 'bg-indigo-600 font-semibold text-white' : 'text-slate-400 hover:bg-slate-800 hover:text-white'}`}
+          >
+           <span>🏆</span> <span>Rankings</span>
           </button>
         </nav>
         <div className="p-4 border-t border-slate-800 text-xs text-slate-500 text-center">
@@ -655,419 +717,207 @@ const handleAddStudent = async () => {
                   return (
                     <div className="space-y-6 animate-fadeIn">
                       
-                      {/* Interactive Breadcrumb Control Header */}
+                      {/* Header with Back button */}
                       <div className="flex items-center justify-between">
                         <div className="flex items-center gap-3">
                           <button
                             onClick={() => setSelectedDetailedStreamId(null)}
                             className="p-1.5 rounded-lg border border-slate-200 text-slate-500 hover:bg-slate-50 transition"
-                            title="Back to grid view"
                           >
                             🔙 Back
                           </button>
-                          <div>
-                            <h2 className="text-xl font-bold text-slate-900">{targetStream.name}</h2>
-                            <p className="text-xs text-slate-500">Detailed structural breakdown and current rosters</p>
-                          </div>
+                          <h2 className="text-xl font-bold text-slate-900">{targetStream.name}</h2>
                         </div>
                       </div>
 
-                      {/* Stat Metrics Row Counters */}
+                      {/* MAPPING FORM: Add this block to enable subject allocation */}
+                      <div className="bg-white border border-slate-200 rounded-xl p-4 shadow-xs">
+                        <h4 className="text-[10px] font-bold text-slate-500 uppercase tracking-wider mb-3">Allocate New Subject</h4>
+                        <form 
+                          onSubmit={(e) => { 
+                            // Set the current stream ID as the target for the mapping
+                            setSelectedMappingStream(targetStream.id.toString());
+                            handleAssignSubjectToStream(e); 
+                          }} 
+                          className="flex gap-3"
+                        >
+                          <select
+                            value={selectedMappingSubject}
+                            onChange={(e) => setSelectedMappingSubject(e.target.value)}
+                            className="flex-1 bg-slate-50 border border-slate-200 rounded-lg px-3 py-2 text-xs"
+                            required
+                          >
+                            <option value="">Select a subject to add...</option>
+                            {subjects.map(sub => (
+                              <option key={sub.id} value={sub.id}>{sub.name} ({sub.code})</option>
+                            ))}
+                          </select>
+                          <button type="submit" className="bg-indigo-600 text-white px-4 py-2 rounded-lg text-xs font-bold hover:bg-indigo-700">
+                            Add Subject
+                          </button>
+                        </form>
+                      </div>
+
+                      {/* Metrics Row */}
                       <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
-                        <div className="bg-indigo-50 border border-indigo-100 rounded-xl p-4 flex items-center gap-4 shadow-2xs">
+                        <div className="bg-indigo-50 border border-indigo-100 rounded-xl p-4 flex items-center gap-4">
                           <span className="text-2xl">👥</span>
                           <div>
-                            <span className="block text-[11px] font-bold text-indigo-500 uppercase tracking-wide">Roster Size</span>
+                            <span className="block text-[11px] font-bold text-indigo-500 uppercase">Roster Size</span>
                             <span className="text-xl font-black text-slate-800">{roster.length} students</span>
                           </div>
                         </div>
-                        <div className="bg-emerald-50 border border-emerald-100 rounded-xl p-4 flex items-center gap-4 shadow-2xs">
+                        <div className="bg-emerald-50 border border-emerald-100 rounded-xl p-4 flex items-center gap-4">
                           <span className="text-2xl">📚</span>
                           <div>
-                            <span className="block text-[11px] font-bold text-emerald-500 uppercase tracking-wide">Subject Scope</span>
-                            <span className="text-xl font-black text-slate-800">{assignedLinks.length} active mappings</span>
+                            <span className="block text-[11px] font-bold text-emerald-500 uppercase">Subject Scope</span>
+                            <span className="text-xl font-black text-slate-800">{assignedLinks.length} mappings</span>
                           </div>
                         </div>
                       </div>
 
-                      {/* Sub-layout: Subject Scopes vs Student Roster list */}
+                      {/* Columns: Subject Frameworks vs Student Roster */}
                       <div className="grid grid-cols-1 lg:grid-cols-3 gap-6">
-                        
-                        {/* Column A: Assigned Subject Frameworks */}
                         <div className="bg-white border border-slate-200 rounded-xl shadow-sm overflow-hidden h-fit">
-                          <div className="px-4 py-3 bg-slate-50 border-b border-slate-200 font-bold text-xs text-slate-500 uppercase tracking-wider">
-                            Mapped Subject Frameworks
+                          <div className="px-4 py-3 bg-slate-50 border-b border-slate-200 font-bold text-xs text-slate-500 uppercase">Mapped Subjects</div>
+                          <div className="divide-y divide-slate-100 max-h-80 overflow-y-auto">
+                            {assignedLinks.length === 0 ? <p className="p-4 text-xs text-slate-400 italic">No subjects added.</p> :
+                            assignedLinks.map(link => {
+                              const sub = subjects.find(s => s.id === link.subject_id);
+                              return sub && (
+                                <div key={link.id} className="p-3 text-xs flex justify-between">
+                                  <span className="font-semibold text-slate-700">{sub.name}</span>
+                                  <span className="font-mono text-slate-400">{sub.code}</span>
+                                </div>
+                              );
+                            })}
                           </div>
-                          {assignedLinks.length === 0 ? (
-                            <p className="p-4 text-xs text-slate-400 italic">No assigned curriculum subjects.</p>
-                          ) : (
-                            <div className="divide-y divide-slate-100 max-h-80 overflow-y-auto">
-                              {assignedLinks.map(link => {
-                                const sub = subjects.find(s => s.id === link.subject_id);
-                                return sub ? (
-                                  <div key={link.id} className="p-3 text-xs flex items-center justify-between">
-                                    <span className="font-semibold text-slate-700">{sub.name}</span>
-                                    <span className="font-mono bg-slate-100 px-1.5 py-0.5 rounded text-slate-500 font-bold">{sub.code}</span>
-                                  </div>
-                                ) : null;
-                              })}
-                            </div>
-                          )}
                         </div>
 
-                        {/* Column B: Full Roster Rollcall Sheet View */}
-                        <div className="bg-white border border-slate-200 rounded-xl shadow-sm overflow-hidden lg:col-span-2">
-                          <div className="px-4 py-3 bg-slate-50 border-b border-slate-200 font-bold text-xs text-slate-500 uppercase tracking-wider">
-                            Class Student Roster Rollcall
-                          </div>
-                          {roster.length === 0 ? (
-                            <p className="p-6 text-sm text-slate-400 italic text-center">No students are currently allocated to this stream profile.</p>
-                          ) : (
-                            <div className="overflow-x-auto max-h-80 overflow-y-auto">
-                              <table className="w-full text-left border-collapse text-xs">
-                                <thead>
-                                  <tr className="border-b border-slate-200 bg-slate-50/50 text-slate-400 font-bold uppercase">
-                                    <th className="px-4 py-2.5">Admission Number</th>
-                                    <th className="px-4 py-2.5">Full Registered Name</th>
-                                  </tr>
-                                </thead>
-                                <tbody className="divide-y divide-slate-100">
-                                  {roster.map(student => (
-                                    <tr key={student.id} className="hover:bg-slate-50/40">
-                                      <td className="px-4 py-2.5 font-mono font-bold text-indigo-600">{student.admission_number}</td>
-                                      <td className="px-4 py-2.5 font-medium text-slate-700">{student.first_name} {student.last_name}</td>
-                                    </tr>
-                                  ))}
-                                </tbody>
-                              </table>
-                            </div>
-                          )}
-                        </div>
-
-                      </div>
-
-                    </div>
-                  );
-                })()
-              )}
-
-            </div>
-          )}
-
-
-
-          {/* ================= STUDENTS MANAGEMENT & INDIVIDUAL PROFILE VIEWS ================= */}
-          {activeTab === 'students' && (
-            <div className="space-y-6">
-              
-              {!selectedDetailedStudentId ? (
-                <>
-                  {/* Standard Form Header Block for Student Entry */}
-                  <div className="bg-white p-6 rounded-xl border border-slate-200 shadow-sm">
-                    <h3 className="text-sm font-bold text-slate-800 mb-4 uppercase tracking-wider">
-                      Register New Student
-                    </h3>
-                    <div className="grid grid-cols-1 sm:grid-cols-4 gap-3">
-                      <input
-                        type="text"
-                        placeholder="Admission Number"
-                        value={newAdmissionNumber}
-                        onChange={(e) => setNewAdmissionNumber(e.target.value)}
-                        className="bg-slate-50 border border-slate-200 rounded-lg px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-indigo-500"
-                      />
-                      <input
-                        type="text"
-                        placeholder="First Name"
-                        value={newFirstName}
-                        onChange={(e) => setNewFirstName(e.target.value)}
-                        className="bg-slate-50 border border-slate-200 rounded-lg px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-indigo-500"
-                      />
-                      <input
-                        type="text"
-                        placeholder="Last Name"
-                        value={newLastName}
-                        onChange={(e) => setNewLastName(e.target.value)}
-                        className="bg-slate-50 border border-slate-200 rounded-lg px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-indigo-500"
-                      />
-                      <select
-                        value={selectedStreamId}
-                        onChange={(e) => setSelectedStreamId(e.target.value)}
-                        className="bg-slate-50 border border-slate-200 rounded-lg px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-indigo-500"
-                      >
-                        <option value="">-- Select Stream --</option>
-                        {streams.map(st => (
-                          <option key={st.id} value={st.id}>{st.name}</option>
-                        ))}
-                      </select>
-                    </div>
-                    <div className="mt-3 text-right">
-                      <button
-                        onClick={handleAddStudent}
-                        className="bg-indigo-600 text-white text-sm font-bold px-5 py-2 rounded-lg hover:bg-indigo-700 transition"
-                      >
-                        + Add Student
-                      </button>
-                    </div>
-                  </div>
-
-                  {/* Main Student Directory Table */}
-                  <div className="bg-white rounded-xl border border-slate-200 shadow-sm overflow-hidden">
-                    <div className="px-6 py-4 bg-slate-50 border-b border-slate-200">
-                      <h3 className="text-xs font-bold uppercase tracking-wider text-slate-500">
-                        Registered Student Directory
-                      </h3>
-                    </div>
-
-                    {students.length === 0 ? (
-                      <p className="text-sm text-slate-500 italic text-center py-8">No students listed on the platform yet.</p>
-                    ) : (
-                      <div className="overflow-x-auto">
-                        <table className="w-full text-left border-collapse text-sm">
-                          <thead>
-                            <tr className="border-b border-slate-200 bg-slate-50 text-slate-400 font-semibold text-xs uppercase">
-                              <th className="px-6 py-3">Adm Number</th>
-                              <th className="px-6 py-3">Full Name</th>
-                              <th className="px-6 py-3">Assigned Class Stream</th>
-                              <th className="px-6 py-3 text-right">Action</th>
-                            </tr>
-                          </thead>
-                            <tbody className="divide-y divide-slate-100 bg-white">
-                    {students.map((student) => {
-                      // Find a previously recorded database row matching this student + subject combination with exact Score typing
-                      const existingRecord: Score | undefined = scores.find(
-                        (sc: Score) => sc.student_id === student.id && sc.subject_id === Number(selectedScoreSubject)
-                      );
-
-                      // Form state selectors: prioritize active typing edits, fallback to existing saved numbers, or default to an empty string
-                      const valCat1 = editingCAT1[student.id] !== undefined 
-                        ? editingCAT1[student.id] 
-                        : (existingRecord && existingRecord.CAT_1 !== null ? String(existingRecord.CAT_1) : '');
-
-                      const valCat2 = editingCAT2[student.id] !== undefined 
-                        ? editingCAT2[student.id] 
-                        : (existingRecord && existingRecord.CAT_2 !== null ? String(existingRecord.CAT_2) : '');
-
-                      const valExam = editingFinalExam[student.id] !== undefined 
-                        ? editingFinalExam[student.id] 
-                        : (existingRecord && existingRecord.final_exam !== null ? String(existingRecord.final_exam) : '');
-
-                      // Parse input states to determine live evaluation metrics
-                      const numCat1 = valCat1.trim() !== '' ? Number(valCat1) : null;
-                      const numCat2 = valCat2.trim() !== '' ? Number(valCat2) : null;
-                      const numExam = valExam.trim() !== '' ? Number(valExam) : null;
-
-                      let liveFinalMarkPreview = "Pending";
-                      let liveGradeIndicator = "";
-
-                      // Compute live calculations if all 3 fields are currently populated by the teacher
-                      if (numCat1 !== null && !isNaN(numCat1) && numCat2 !== null && !isNaN(numCat2) && numExam !== null && !isNaN(numExam)) {
-                        const catAverage = (numCat1 + numCat2) / 2;
-                        const weightedCat = (catAverage / 100) * 15;
-                        const weightedExam = (numExam / 100) * 85;
-                        const computedTotal = Math.round(weightedCat + weightedExam);
-                        liveFinalMarkPreview = `${computedTotal}%`;
-                        liveGradeIndicator = `Grade ${calculateGrade(computedTotal).grade}`;
-                      } 
-                      // Fallback to displaying saved values directly from database if fields are left untouched
-                      else if (existingRecord && existingRecord.final_grade !== null) {
-                        liveFinalMarkPreview = `${existingRecord.final_grade}%`;
-                        liveGradeIndicator = `Grade ${calculateGrade(existingRecord.final_grade).grade}`;
-                      }
-
-                      return (
-                        <tr key={student.id} className="hover:bg-slate-50/50 transition border-b border-slate-100">
-                          <td className="px-4 py-3 font-mono font-bold text-indigo-600">
-                            {student.admission_number}
-                          </td>
-                          <td className="px-4 py-3 font-medium text-slate-800">
-                            {student.first_name} {student.last_name}
-                          </td>
-                          
-                          {/* CAT 1 Entry Input Column */}
-                          <td className="px-3 py-2">
-                            <div className="relative rounded-lg">
-                              <input
-                                type="number"
-                                min="0"
-                                max="100"
-                                placeholder="0-100"
-                                value={valCat1}
-                                onChange={(e) => setEditingCAT1({ ...editingCAT1, [student.id]: e.target.value })}
-                                className="w-full bg-slate-50 border border-slate-200 rounded-lg pl-2.5 pr-9 py-1.5 text-sm font-medium focus:outline-none focus:ring-2 focus:ring-indigo-500 transition"
-                              />
-                              <span className="absolute right-2 top-2 text-[10px] font-bold text-slate-400 select-none">/100</span>
-                            </div>
-                          </td>
-
-                          {/* CAT 2 Entry Input Column */}
-                          <td className="px-3 py-2">
-                            <div className="relative rounded-lg">
-                              <input
-                                type="number"
-                                min="0"
-                                max="100"
-                                placeholder="0-100"
-                                value={valCat2}
-                                onChange={(e) => setEditingCAT2({ ...editingCAT2, [student.id]: e.target.value })}
-                                className="w-full bg-slate-50 border border-slate-200 rounded-lg pl-2.5 pr-9 py-1.5 text-sm font-medium focus:outline-none focus:ring-2 focus:ring-indigo-500 transition"
-                              />
-                              <span className="absolute right-2 top-2 text-[10px] font-bold text-slate-400 select-none">/100</span>
-                            </div>
-                          </td>
-
-                          {/* Final Examination Entry Input Column */}
-                          <td className="px-3 py-2">
-                            <div className="relative rounded-lg">
-                              <input
-                                type="number"
-                                min="0"
-                                max="100"
-                                placeholder="0-100"
-                                value={valExam}
-                                onChange={(e) => setEditingFinalExam({ ...editingFinalExam, [student.id]: e.target.value })}
-                                className="w-full bg-slate-50 border border-slate-200 rounded-lg pl-2.5 pr-9 py-1.5 text-sm font-medium focus:outline-none focus:ring-2 focus:ring-indigo-500 transition"
-                              />
-                              <span className="absolute right-2 top-2 text-[10px] font-bold text-slate-400 select-none">/100</span>
-                            </div>
-                          </td>
-
-                          {/* Live Weighted Calculation Preview Indicator column */}
-                          <td className="px-4 py-3 text-center font-bold font-mono text-slate-800 bg-slate-50/40">
-                            {liveFinalMarkPreview}
-                          </td>
-
-                          {/* Dynamic Letter Grade Badge indicator Column */}
-                          <td className="px-4 py-3 text-center">
-                            {liveGradeIndicator ? (
-                              <span className="text-[10px] bg-indigo-50 text-indigo-700 border border-indigo-100 px-2.5 py-0.5 rounded-md font-extrabold tracking-wide uppercase font-mono">
-                                {liveGradeIndicator}
-                              </span>
-                            ) : (
-                              <span className="text-slate-400 italic font-normal text-[11px] tracking-wide">Awaiting Marks</span>
-                            )}
-                          </td>
-
-                          {/* Interactive Single Row Verification Action Trigger */}
-                          <td className="px-4 py-2 text-right">
-                            <button
-                              onClick={() => handleSaveSingleScore(Number(student.id))}
-                              className="bg-indigo-600 text-white text-xs font-bold px-4 py-1.5 rounded-lg hover:bg-indigo-700 active:scale-98 transition duration-150"
-                            >
-                              Save Row
-                            </button>
-                          </td>
-                        </tr>
-                      );
-                    })}
-                            </tbody>
-                        </table>
-                      </div>
-                    )}
-                  </div>
-                </>
-              ) : (
-                /* ================= SINGLE STUDENT PERFORMANCE RECORD DASHBOARD ================= */
-                (() => {
-                  const targetStudent = students.find(s => s.id === selectedDetailedStudentId);
-                  if (!targetStudent) return <p className="text-sm text-red-500">Student session dropped.</p>;
-
-                  const classStream = streams.find(st => st.id === targetStudent.stream_id);
-                  const studentScores = scores.filter(sc => sc.student_id === targetStudent.id);
-
-                  return (
-                    <div className="space-y-6 animate-fadeIn">
-                      
-                      {/* Controls Breadcrumb Nav Bar */}
-                      <div className="flex items-center gap-3">
-                        <button
-                          onClick={() => setSelectedDetailedStudentId(null)}
-                          className="p-1.5 rounded-lg border border-slate-200 text-slate-500 hover:bg-slate-50 transition text-xs font-bold"
-                        >
-                          🔙 Back to Directory
-                        </button>
-                      </div>
-
-                      {/* Bio Meta Profile Card */}
-                      <div className="bg-white border border-slate-200 rounded-xl p-6 shadow-sm flex flex-col sm:flex-row justify-between items-start sm:items-center gap-4">
-                        <div>
-                          <span className="text-xs bg-indigo-50 font-mono text-indigo-700 font-bold px-2 py-0.5 rounded">
-                            {targetStudent.admission_number}
-                          </span>
-                          <h2 className="text-2xl font-black text-slate-900 mt-1">
-                            {targetStudent.first_name} {targetStudent.last_name}
-                          </h2>
-                          <p className="text-xs text-slate-400 mt-0.5">
-                            Allocated Class Unit: <strong className="text-slate-600 font-semibold">{classStream ? classStream.name : 'None'}</strong>
-                          </p>
-                        </div>
-                        <div className="bg-slate-50 rounded-lg px-4 py-2 border border-slate-200 text-center w-full sm:w-auto">
-                          <span className="text-xs font-bold text-slate-400 uppercase block tracking-wider">Subjects Taken</span>
-                          <span className="text-xl font-black text-slate-800">{studentScores.length}</span>
-                        </div>
-                      </div>
-
-                      {/* Performance Breakdown Table Grid Sheet */}
-                      <div className="bg-white rounded-xl border border-slate-200 shadow-sm overflow-hidden">
-                        <div className="px-4 py-3 bg-slate-50 border-b border-slate-200 font-bold text-xs text-slate-500 uppercase tracking-wider">
-                          Academic Subject Performance Ledger
-                        </div>
-
-                        {studentScores.length === 0 ? (
-                          <p className="p-8 text-sm text-slate-400 italic text-center">No examination scores saved for this student.</p>
-                        ) : (
-                          <div className="overflow-x-auto">
-                            <table className="w-full text-left border-collapse text-xs">
-                              <thead>
-                                <tr className="bg-slate-50/50 border-b border-slate-200 text-slate-400 font-bold uppercase">
-                                  <th className="px-4 py-3">Subject Name</th>
-                                  <th className="px-4 py-3 text-center">CAT 1 (/100)</th>
-                                  <th className="px-4 py-3 text-center">CAT 2 (/100)</th>
-                                  <th className="px-4 py-3 text-center">Final Exam (/100)</th>
-                                  <th className="px-4 py-3 text-center bg-indigo-50/40 text-indigo-700">Calculated Final Mark</th>
-                                  <th className="px-4 py-3 text-right">Letter Grade</th>
-                                </tr>
-                              </thead>
+                        <div className="bg-white border border-slate-200 rounded-xl shadow-sm lg:col-span-2">
+                          <div className="px-4 py-3 bg-slate-50 border-b border-slate-200 font-bold text-xs text-slate-500 uppercase">Student Roster</div>
+                          <div className="overflow-x-auto max-h-80 overflow-y-auto">
+                            <table className="w-full text-left text-xs">
                               <tbody className="divide-y divide-slate-100">
-                                {studentScores.map(sc => {
-                                  const sub = subjects.find(s => s.id === sc.subject_id);
-                                  const gradeMetrics = sc.final_grade !== null ? calculateGrade(sc.final_grade) : null;
-
-                                  return (
-                                    <tr key={sc.id} className="hover:bg-slate-50/30">
-                                      <td className="px-4 py-3 font-semibold text-slate-700">
-                                        {sub ? `${sub.name} (${sub.code})` : `Unknown Subject ID: ${sc.subject_id}`}
-                                      </td>
-                                      <td className="px-4 py-3 text-center font-mono text-slate-600">{sc.CAT_1 !== null ? `${sc.CAT_1}` : '-'}</td>
-                                      <td className="px-4 py-3 text-center font-mono text-slate-600">{sc.CAT_2 !== null ? `${sc.CAT_2}` : '-'}</td>
-                                      <td className="px-4 py-3 text-center font-mono text-slate-600">{sc.final_exam !== null ? `${sc.final_exam}` : '-'}</td>
-                                      <td className="px-4 py-3 text-center font-bold font-mono bg-indigo-50/20 text-slate-900">
-                                        {sc.final_grade !== null ? `${sc.final_grade}%` : 'Pending'}
-                                      </td>
-                                      <td className="px-4 py-3 text-right">
-                                        {gradeMetrics ? (
-                                          <span className={`text-[10px] font-extrabold px-2 py-0.5 rounded lowercase tracking-wider first-letter:uppercase font-mono ${gradeMetrics.color}`}>
-                                            Grade {gradeMetrics.grade}
-                                          </span>
-                                        ) : (
-                                          <span className="text-slate-400 italic font-normal text-[10px]">No Grade</span>
-                                        )}
-                                      </td>
-                                    </tr>
-                                  );
-                                })}
+                                {roster.map(student => (
+                                  <tr key={student.id}>
+                                    <td className="px-4 py-3 font-mono font-bold text-indigo-600">{student.admission_number}</td>
+                                    <td className="px-4 py-3 font-medium text-slate-700">{student.first_name} {student.last_name}</td>
+                                  </tr>
+                                ))}
                               </tbody>
                             </table>
                           </div>
+                        </div>
+                      </div>
+                    </div>
+                 );
+              })()
+            )}
+          </div>
+        )}
+
+
+
+              {activeTab === 'students' && (
+                <div className="space-y-6 animate-fadeIn">
+                  
+                  {/* 1. REGISTRATION & EDIT FORM */}
+                  <div className="bg-white border border-slate-200 rounded-xl p-6 shadow-xs">
+                    <div className="border-b border-slate-100 pb-3 mb-4">
+                      <h3 className="text-sm font-bold text-slate-800 uppercase tracking-wide">
+                        {studentForm.id !== 0 ? "Edit Student Profile" : "Register New Student"}
+                      </h3>
+                    </div>
+                    
+                    <form onSubmit={handleSaveStudent} className="grid grid-cols-1 md:grid-cols-4 gap-4 items-end">
+                      <input
+                        placeholder="Admission No."
+                        value={studentForm.admission_number}
+                        onChange={(e) => setStudentForm({...studentForm, admission_number: e.target.value})}
+                        className="bg-slate-50 border border-slate-200 rounded-lg px-3 py-2 text-xs font-bold uppercase"
+                        required
+                      />
+                      <input
+                        placeholder="First Name"
+                        value={studentForm.first_name}
+                        onChange={(e) => setStudentForm({...studentForm, first_name: e.target.value})}
+                        className="bg-slate-50 border border-slate-200 rounded-lg px-3 py-2 text-xs"
+                        required
+                      />
+                      <input
+                        placeholder="Last Name"
+                        value={studentForm.last_name}
+                        onChange={(e) => setStudentForm({...studentForm, last_name: e.target.value})}
+                        className="bg-slate-50 border border-slate-200 rounded-lg px-3 py-2 text-xs"
+                        required
+                      />
+                      <select
+                        value={studentForm.stream_id}
+                        onChange={(e) => setStudentForm({...studentForm, stream_id: e.target.value})}
+                        className="bg-slate-50 border border-slate-200 rounded-lg px-3 py-2 text-xs"
+                        required
+                      >
+                        <option value="">Select Stream</option>
+                        {streams.map(s => <option key={s.id} value={s.id}>{s.name}</option>)}
+                      </select>
+
+                      <div className="md:col-span-4 flex gap-2 pt-2">
+                        <button type="submit" className="bg-emerald-600 text-white px-4 py-2 rounded-lg text-xs font-bold hover:bg-emerald-700">
+                          {studentForm.id !== 0 ? "Update Record" : "Register Student"}
+                        </button>
+                        {studentForm.id !== 0 && (
+                          <button type="button" onClick={() => setStudentForm({id: 0, admission_number: '', first_name: '', last_name: '', stream_id: ''})} className="bg-slate-200 px-4 py-2 rounded-lg text-xs font-bold">
+                            Cancel
+                          </button>
                         )}
                       </div>
+                    </form>
+                  </div>
 
+                  {/* 2. STUDENT MANIFEST TABLE */}
+                  <div className="bg-white border border-slate-200 rounded-xl overflow-hidden shadow-xs">
+                    <div className="p-4 bg-slate-50 border-b border-slate-200">
+                      <h4 className="text-xs font-bold text-slate-700 uppercase">System Account Manifest</h4>
                     </div>
-                  );
-                })()
+                    <div className="overflow-x-auto">
+                      <table className="w-full text-left border-collapse">
+                        <thead>
+                          <tr className="bg-slate-50 text-slate-500 font-bold text-[10px] uppercase">
+                            <th className="px-4 py-3">Adm Number</th>
+                            <th className="px-4 py-3">Full Name</th>
+                            <th className="px-4 py-3">Stream</th>
+                            <th className="px-4 py-3 text-right">Actions</th>
+                          </tr>
+                        </thead>
+                        <tbody className="divide-y divide-slate-100">
+                          {students.map((student) => (
+                            <tr key={student.id} className="text-xs hover:bg-slate-50">
+                              <td className="px-4 py-3 font-mono font-bold text-indigo-600">{student.admission_number}</td>
+                              <td className="px-4 py-3 font-medium">{student.first_name} {student.last_name}</td>
+                              <td className="px-4 py-3 text-slate-600">{streams.find(s => s.id === student.stream_id)?.name}</td>
+                              <td className="px-4 py-3 text-right space-x-2">
+                                <button onClick={() => handleEditStudentClick(student)} className="text-indigo-600 hover:underline font-bold">Edit</button>
+                                <button onClick={() => handleDeleteStudent(student.id)} className="text-red-600 hover:underline font-bold">Delete</button>
+                              </td>
+                            </tr>
+                          ))}
+                        </tbody>
+                      </table>
+                    </div>
+                  </div>
+                </div>
               )}
 
-            </div>
-          )}
+
+
+
+
+
+
+
+
+
 
 
           {/* ================= SUBJECTS FRAMEWORK terminal WITH EDIT & DELETE ================= */}
@@ -1198,196 +1048,372 @@ const handleAddStudent = async () => {
             </div>
           )}
 
+
+
+
+
+
         {/* ================= MULTI-COLUMN ASSESSMENT PANEL WITH EXPLICIT LABELS ================= */}
-          {activeTab === 'scores' && (
-            <div className="space-y-6">
+        {activeTab === 'scores' && (
+            <div className="space-y-6 animate-fadeIn">
               
-              {/* Context Selector Bar Block */}
-              <div className="bg-white p-6 rounded-xl border border-slate-200 shadow-sm grid grid-cols-1 md:grid-cols-2 gap-4">
-                <div>
-                  <label className="block text-xs font-semibold text-slate-600 mb-1">Target Assessment Class</label>
-                  <select
-                    value={selectedScoreStream}
-                    onChange={(e) => {
-                      setSelectedScoreStream(e.target.value);
-                      setSelectedScoreSubject('');
-                    }}
-                    className="w-full bg-slate-50 border border-slate-200 rounded-lg px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-indigo-500"
-                  >
-                    <option value="">-- Choose Class Target --</option>
-                    {streams.map(st => (
-                      <option key={st.id} value={st.id}>{st.name}</option>
-                    ))}
-                  </select>
+              {/* --- COMPACT FILTER MODULE DASHBOARD --- */}
+              <div className="bg-white border border-slate-200 rounded-xl p-5 shadow-xs">
+                <div className="border-b border-slate-100 pb-3 mb-4">
+                  <h3 className="text-sm font-bold text-slate-800 uppercase tracking-wide">
+                    Scores & Academic Grading Desk
+                  </h3>
+                  <p className="text-xs text-slate-500 mt-0.5">
+                    Select a class stream and target subject scope to view, input, modify, or remove student grades.
+                  </p>
                 </div>
 
-                <div>
-                  <label className="block text-xs font-semibold text-slate-600 mb-1">Subject Scope</label>
-                  <select
-                    value={selectedScoreSubject}
-                    onChange={(e) => setSelectedScoreSubject(e.target.value)}
-                    disabled={!selectedScoreStream}
-                    className="w-full bg-slate-50 border border-slate-200 rounded-lg px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-indigo-500 disabled:opacity-50"
-                  >
-                    <option value="">-- Choose Subject Scope --</option>
-                    {subjectMappings
-                      .filter(m => String(m.stream_id) === selectedScoreStream)
-                      .map(link => {
-                        const sub = subjects.find(s => s.id === link.subject_id);
-                        return sub ? <option key={sub.id} value={sub.id}>{sub.name} ({sub.code})</option> : null;
-                      })
-                    }
-                  </select>
+                <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
+                  <div>
+                    <label className="block text-xs font-bold text-slate-700 uppercase tracking-tight mb-1">
+                      Class Stream Selector
+                    </label>
+                   <select
+                          // Use String() conversion to ensure the component receives a string 
+                          // even if the state is a number
+                          value={selectedStreamId !== null ? String(selectedStreamId) : ''}
+                          
+                          // Use Number() to convert the string back to a number for your state
+                          onChange={(e) => {
+                            const val = e.target.value;
+                            setSelectedStreamId(val === '' ? null : Number(val));
+                          }}
+                          className="w-full bg-slate-50 border border-slate-200 rounded-lg px-3 py-2 text-xs font-medium text-slate-700 focus:bg-white focus:outline-indigo-500 transition"
+                        >
+                          <option value="">-- Choose Class Stream --</option>
+                          {streams.map((s) => (
+                            <option key={s.id} value={s.id}>{s.name}</option>
+                          ))}
+                        </select>
+                  </div>
+
+                  <div>
+                    <label className="block text-xs font-bold text-slate-700 uppercase tracking-tight mb-1">
+                      Subject Scope
+                    </label>
+                    <select
+                      value={selectedScoreSubject || ''}
+                      onChange={(e) => setSelectedScoreSubject(e.target.value || '')}
+                      className="w-full bg-slate-50 border border-slate-200 rounded-lg px-3 py-2 text-xs font-medium text-slate-700 focus:bg-white focus:outline-indigo-500 transition"
+                    >
+                      <option value="">-- Choose Subject Scope --</option>
+                      {subjects.map((sub) => (
+                        <option key={sub.id} value={sub.id}>[{sub.code}] {sub.name}</option>
+                      ))}
+                    </select>
+                  </div>
                 </div>
               </div>
 
-              {/* Live Roster Sheet View */}
-              {!selectedScoreStream || !selectedScoreSubject ? (
-                <div className="bg-white p-12 rounded-xl border border-slate-200 shadow-sm text-center">
-                  <span className="text-3xl block mb-2">📊</span>
-                  <p className="text-sm font-medium text-slate-500">
-                    Specify class stream and subject targets above to mount the gradebook terminal sheet.
-                  </p>
+              {/* UNSELECTED INCOMPLETE FILTER STATE */}
+              {(!selectedStreamId || !selectedScoreSubject) && (
+                <div className="bg-slate-50/50 border border-dashed border-slate-200 rounded-xl p-10 text-center">
+                  <span className="text-xs text-slate-400 font-medium italic">
+                    Please select both a class stream and an academic subject scope to open the gradebooks.
+                  </span>
                 </div>
-              ) : (
-                <div className="bg-white rounded-xl border border-slate-200 shadow-sm overflow-hidden">
+              )}
+
+              {/* SEPARATED SPLIT MIGRATION LAYOUT WORKBENCH */}
+              {selectedStreamId && selectedScoreSubject && (
+                <div className="grid grid-cols-1 xl:grid-cols-12 gap-6">
                   
-                  {/* Dynamic Instructions Alert Header */}
-                  <div className="px-6 py-4 bg-amber-50 border-b border-amber-200 flex items-start gap-3">
-                    <span className="text-base mt-0.5">💡</span>
-                    <div className="text-xs text-amber-800 leading-relaxed">
-                      <strong className="font-semibold block mb-0.5">Grading Sheet Instructions:</strong>
-                      Please input all student marks as a raw score out of 100. The system will automatically calculate the weights behind the scenes (Average CATs weighted to 15%, Final Exam weighted to 85%).
+                  {/* =======================================================================
+                      PANEL A: UNCOMMITTED INPUT ROSTER SHEET (Left Side)
+                      ======================================================================= */}
+                  <div className="bg-white border border-slate-200 rounded-xl overflow-hidden shadow-xs xl:col-span-5 h-fit">
+                    <div className="p-4 bg-amber-50/40 border-b border-amber-100">
+                      <h4 className="text-xs font-bold text-amber-800 uppercase tracking-wide flex items-center gap-1">
+                        <span className="w-2 h-2 rounded-full bg-amber-500 animate-pulse"></span>
+                        Pending Grade Sheet Inputs
+                      </h4>
+                      <p className="text-[11px] text-slate-500 mt-0.5">Students awaiting score initializes for this selected term module.</p>
+                    </div>
+
+                    <div className="p-4 space-y-4 max-h-[550px] overflow-y-auto">
+                      {students.filter(st => st.stream_id === Number(selectedStreamId)).length === 0 ? (
+                        <p className="text-xs text-slate-400 text-center py-4 italic">No students registered to this class stream yet.</p>
+                      ) : (
+                        students
+                          .filter(st => st.stream_id === Number(selectedStreamId))
+                          // Exclude students who already have a committed database entry for this subject
+                          .filter(st => !scores.some(sc => sc.student_id === st.id && sc.subject_id === Number(selectedScoreSubject)))
+                          .map((student) => {
+                            return (
+                              <div key={student.id} className="p-3 bg-slate-50 border border-slate-200 rounded-lg space-y-2">
+                                <div className="flex justify-between items-center border-b border-slate-200/60 pb-1">
+                                  <span className="text-xs font-bold text-slate-700">{student.first_name} {student.last_name}</span>
+                                  <span className="text-[11px] font-mono font-bold text-indigo-600 bg-indigo-50 px-1.5 py-0.5 rounded">{student.admission_number}</span>
+                                </div>
+                                <div className="grid grid-cols-3 gap-2">
+                                  <div>
+                                    <label className="text-[10px] text-slate-500 font-bold block mb-0.5 uppercase">CAT 1</label>
+                                    <input
+                                      type="text"
+                                      placeholder="0-100"
+                                      value={editingCAT1[student.id] || ''}
+                                      onChange={(e) => setEditingCAT1(prev => ({ ...prev, [student.id]: e.target.value }))}
+                                      className="w-full bg-white border border-slate-200 rounded px-2 py-1 text-xs font-semibold focus:outline-indigo-500"
+                                    />
+                                  </div>
+                                  <div>
+                                    <label className="text-[10px] text-slate-500 font-bold block mb-0.5 uppercase">CAT 2</label>
+                                    <input
+                                      type="text"
+                                      placeholder="0-100"
+                                      value={editingCAT2[student.id] || ''}
+                                      onChange={(e) => setEditingCAT2(prev => ({ ...prev, [student.id]: e.target.value }))}
+                                      className="w-full bg-white border border-slate-200 rounded px-2 py-1 text-xs font-semibold focus:outline-indigo-500"
+                                    />
+                                  </div>
+                                  <div>
+                                    <label className="text-[10px] text-slate-500 font-bold block mb-0.5 uppercase">Exam</label>
+                                    <input
+                                      type="text"
+                                      placeholder="0-100"
+                                      value={editingFinalExam[student.id] || ''}
+                                      onChange={(e) => setEditingFinalExam(prev => ({ ...prev, [student.id]: e.target.value }))}
+                                      className="w-full bg-white border border-slate-200 rounded px-2 py-1 text-xs font-semibold focus:outline-indigo-500"
+                                    />
+                                  </div>
+                                </div>
+                                <div className="flex justify-end pt-1">
+                                  <button
+                                    onClick={() => handleSaveSingleScore(student.id)}
+                                    className="bg-emerald-600 hover:bg-emerald-700 text-white font-bold text-[10px] uppercase tracking-wide px-3 py-1 rounded transition cursor-pointer shadow-2xs"
+                                  >
+                                    Commit Record
+                                  </button>
+                                </div>
+                              </div>
+                            );
+                          })
+                      )}
+                      {students.filter(st => st.stream_id === Number(selectedStreamId)).filter(st => !scores.some(sc => sc.subject_id === Number(selectedScoreSubject) && sc.student_id === st.id)).length === 0 && (
+                        <p className="text-xs text-slate-400 text-center py-4 italic">All student rows under this criteria filter have been committed.</p>
+                      )}
                     </div>
                   </div>
-                  
-                  {students.filter(s => String(s.stream_id) === selectedScoreStream).length === 0 ? (
-                    <p className="text-sm text-slate-500 italic text-center py-12">
-                      No student configurations available within this stream profile.
-                    </p>
-                  ) : (
+
+                  {/* =======================================================================
+                      PANEL B: ACTIVE DATABASE SCORES REGISTRY LEDGER (Right Side)
+                      ======================================================================= */}
+                  <div className="bg-white border border-slate-200 rounded-xl overflow-hidden shadow-xs xl:col-span-7">
+                    <div className="p-4 bg-indigo-50/40 border-b border-indigo-100">
+                      <h4 className="text-xs font-bold text-indigo-800 uppercase tracking-wide">
+                        Active Database Scores Registry Ledger
+                      </h4>
+                      <p className="text-[11px] text-slate-500 mt-0.5">Committed data blocks. Modify indices inline using existing validation rules or erase records completely.</p>
+                    </div>
+
                     <div className="overflow-x-auto">
-                      <table className="w-full text-left border-collapse text-sm">
+                      <table className="w-full text-left border-collapse">
                         <thead>
-                          <tr className="border-b border-slate-200 bg-slate-50 text-slate-400 font-semibold text-xs uppercase tracking-wider">
-                            <th className="px-4 py-3">Adm Number</th>
-                            <th className="px-4 py-3">Student Name</th>
-                            {/* Clear Header Context Labels */}
-                            <th className="px-4 py-3 w-32 text-slate-700 font-bold">CAT 1 <span className="block text-[10px] font-normal text-slate-400 font-sans tracking-normal normal-case">(Score out of 100)</span></th>
-                            <th className="px-4 py-3 w-32 text-slate-700 font-bold">CAT 2 <span className="block text-[10px] font-normal text-slate-400 font-sans tracking-normal normal-case">(Score out of 100)</span></th>
-                            <th className="px-4 py-3 w-32 text-slate-700 font-bold">Final Exam <span className="block text-[10px] font-normal text-slate-400 font-sans tracking-normal normal-case">(Score out of 100)</span></th>
-                            <th className="px-4 py-3 text-center bg-indigo-50 text-indigo-700 font-bold">Weighted Total <span className="block text-[10px] font-bold text-indigo-500/70 font-sans tracking-normal normal-case">(Max 100%)</span></th>
-                            <th className="px-4 py-3 text-right">Action</th>
+                          <tr className="bg-slate-100/70 border-b border-slate-200 text-slate-600 font-bold text-[10px] uppercase tracking-wider select-none">
+                            <th className="px-4 py-2.5 w-[35%]">Student Detail</th>
+                            <th className="px-2 py-2.5 text-center w-[12%]">CAT 1</th>
+                            <th className="px-2 py-2.5 text-center w-[12%]">CAT 2</th>
+                            <th className="px-2 py-2.5 text-center w-[12%]">Exam</th>
+                            <th className="px-2 py-2.5 text-center w-[14%]">Weight Total</th>
+                            <th className="px-4 py-2.5 text-right w-[15%]">Actions</th>
                           </tr>
                         </thead>
-                        <tbody className="divide-y divide-slate-100">
-                          {students
-                            .filter(s => String(s.stream_id) === selectedScoreStream)
-                            .map((student) => {
-                              const existingRecord = scores.find(
-                                sc => sc.student_id === student.id && sc.subject_id === Number(selectedScoreSubject)
-                              );
-                              
-                              const valCat1 = editingCAT1[student.id] !== undefined ? editingCAT1[student.id] : (existingRecord && existingRecord.CAT_1 !== null ? String(existingRecord.CAT_1) : '');
-                              const valCat2 = editingCAT2[student.id] !== undefined ? editingCAT2[student.id] : (existingRecord && existingRecord.CAT_2 !== null ? String(existingRecord.CAT_2) : '');
-                              const valExam = editingFinalExam[student.id] !== undefined ? editingFinalExam[student.id] : (existingRecord && existingRecord.final_exam !== null ? String(existingRecord.final_exam) : '');
+                        <tbody className="divide-y divide-slate-100 bg-white text-xs">
+                          {scores.filter(sc => sc.subject_id === Number(selectedScoreSubject) && students.some(st => st.id === sc.student_id && st.stream_id === Number(selectedStreamId))).length === 0 ? (
+                            <tr>
+                              <td colSpan={6} className="px-4 py-8 text-center text-sm text-slate-400 italic">
+                                No committed records found for this combination. Enter marks on the left to initialize tracking rows.
+                              </td>
+                            </tr>
+                          ) : (
+                            scores
+                              .filter(sc => sc.subject_id === Number(selectedScoreSubject) && students.some(st => st.id === sc.student_id && st.stream_id === Number(selectedStreamId)))
+                              .map((score) => {
+                                const studentInfo = students.find(s => s.id === score.student_id);
+                                const isEditingActive = selectedDetailedStudentId === score.student_id;
 
-                              const finalMark = existingRecord && existingRecord.final_grade !== null ? existingRecord.final_grade : null;
-                              const dynamicGradeDetails = finalMark !== null ? calculateGrade(finalMark) : null;
+                                return (
+                                  <tr key={score.id} className="hover:bg-slate-50/40 transition">
+                                    {/* Student Profile Metadata block */}
+                                    <td className="px-4 py-3">
+                                      {studentInfo ? (
+                                        <div>
+                                          <div className="font-bold text-slate-800">{studentInfo.first_name} {studentInfo.last_name}</div>
+                                          <div className="text-[10px] font-mono text-indigo-500 font-semibold">{studentInfo.admission_number}</div>
+                                        </div>
+                                      ) : (
+                                        <span className="text-red-500 italic text-[11px]">Unknown Entity Record ({score.student_id})</span>
+                                      )}
+                                    </td>
 
-                              return (
-                                <tr key={student.id} className="hover:bg-slate-50/50 transition">
-                                  <td className="px-4 py-3 font-mono text-xs text-indigo-600 font-semibold">
-                                    {student.admission_number}
-                                  </td>
-                                  <td className="px-4 py-3 font-medium text-slate-700">
-                                    {student.first_name} {student.last_name}
-                                  </td>
-                                  
-                                  {/* CAT_1 Data Input Box */}
-                                  <td className="px-4 py-3">
-                                    <div className="relative flex items-center">
-                                      <input 
-                                        type="number" 
-                                        placeholder="0-100"
-                                        min="0"
-                                        max="100"
-                                        value={valCat1}
-                                        onChange={(e) => setEditingCAT1({...editingCAT1, [student.id]: e.target.value})}
-                                        className="w-full bg-slate-50 border border-slate-200 rounded-lg pl-2 pr-7 py-1 text-sm font-medium focus:outline-none focus:ring-2 focus:ring-indigo-500"
-                                      />
-                                      <span className="absolute right-2 text-[10px] font-semibold text-slate-400">/100</span>
-                                    </div>
-                                  </td>
+                                    {/* CAT 1 Parameter Handle */}
+                                    <td className="px-2 py-3 text-center">
+                                      {isEditingActive ? (
+                                        <input
+                                          type="text"
+                                          value={editingCAT1[score.student_id] !== undefined ? editingCAT1[score.student_id] : (score.CAT_1 !== null ? String(score.CAT_1) : '')}
+                                          onChange={(e) => setEditingCAT1(prev => ({ ...prev, [score.student_id]: e.target.value }))}
+                                          className="w-14 bg-slate-50 border border-slate-300 rounded text-center font-bold text-xs py-0.5 focus:bg-white focus:outline-indigo-500"
+                                        />
+                                      ) : (
+                                        <span className="font-semibold text-slate-700">{score.CAT_1 !== null ? score.CAT_1 : '-'}</span>
+                                      )}
+                                    </td>
 
-                                  {/* CAT_2 Data Input Box */}
-                                  <td className="px-4 py-3">
-                                    <div className="relative flex items-center">
-                                      <input 
-                                        type="number" 
-                                        placeholder="0-100"
-                                        min="0"
-                                        max="100"
-                                        value={valCat2}
-                                        onChange={(e) => setEditingCAT2({...editingCAT2, [student.id]: e.target.value})}
-                                        className="w-full bg-slate-50 border border-slate-200 rounded-lg pl-2 pr-7 py-1 text-sm font-medium focus:outline-none focus:ring-2 focus:ring-indigo-500"
-                                      />
-                                      <span className="absolute right-2 text-[10px] font-semibold text-slate-400">/100</span>
-                                    </div>
-                                  </td>
+                                    {/* CAT 2 Parameter Handle */}
+                                    <td className="px-2 py-3 text-center">
+                                      {isEditingActive ? (
+                                        <input
+                                          type="text"
+                                          value={editingCAT2[score.student_id] !== undefined ? editingCAT2[score.student_id] : (score.CAT_2 !== null ? String(score.CAT_2) : '')}
+                                          onChange={(e) => setEditingCAT2(prev => ({ ...prev, [score.student_id]: e.target.value }))}
+                                          className="w-14 bg-slate-50 border border-slate-300 rounded text-center font-bold text-xs py-0.5 focus:bg-white focus:outline-indigo-500"
+                                        />
+                                      ) : (
+                                        <span className="font-semibold text-slate-700">{score.CAT_2 !== null ? score.CAT_2 : '-'}</span>
+                                      )}
+                                    </td>
 
-                                  {/* final_exam Data Input Box */}
-                                  <td className="px-4 py-3">
-                                    <div className="relative flex items-center">
-                                      <input 
-                                        type="number" 
-                                        placeholder="0-100"
-                                        min="0"
-                                        max="100"
-                                        value={valExam}
-                                        onChange={(e) => setEditingFinalExam({...editingFinalExam, [student.id]: e.target.value})}
-                                        className="w-full bg-slate-50 border border-slate-200 rounded-lg pl-2 pr-7 py-1 text-sm font-medium focus:outline-none focus:ring-2 focus:ring-indigo-500"
-                                      />
-                                      <span className="absolute right-2 text-[10px] font-semibold text-slate-400">/100</span>
-                                    </div>
-                                  </td>
+                                    {/* Exam Parameter Handle */}
+                                    <td className="px-2 py-3 text-center">
+                                      {isEditingActive ? (
+                                        <input
+                                          type="text"
+                                          value={editingFinalExam[score.student_id] !== undefined ? editingFinalExam[score.student_id] : (score.final_exam !== null ? String(score.final_exam) : '')}
+                                          onChange={(e) => setEditingFinalExam(prev => ({ ...prev, [score.student_id]: e.target.value }))}
+                                          className="w-14 bg-slate-50 border border-slate-300 rounded text-center font-bold text-xs py-0.5 focus:bg-white focus:outline-indigo-500"
+                                        />
+                                      ) : (
+                                        <span className="font-semibold text-slate-700">{score.final_exam !== null ? score.final_exam : '-'}</span>
+                                      )}
+                                    </td>
 
-                                  {/* Final Output Summary */}
-                                  <td className="px-4 py-3 text-center bg-indigo-50/40 font-bold">
-                                    {finalMark !== null && dynamicGradeDetails ? (
-                                      <div className="flex flex-col items-center justify-center">
-                                        <span className="text-sm font-mono text-slate-900">{finalMark}%</span>
-                                        <span className={`text-[10px] font-extrabold px-2 py-0.5 rounded-sm uppercase tracking-wide shadow-2xs ${dynamicGradeDetails.color}`}>
-                                          Grade {dynamicGradeDetails.grade}
+                                    {/* Calculated Total Weighted summary */}
+                                    <td className="px-2 py-3 text-center">
+                                      {isEditingActive ? (
+                                        <span className="text-[10px] text-amber-600 font-bold tracking-wide animate-pulse">Awaiting...</span>
+                                      ) : (
+                                        <span className="font-mono font-bold text-slate-900">{score.final_grade !== null ? score.final_grade : '-'}</span>
+                                      )}
+                                    </td>
+
+                                      {/* FIXED CODE */}
+                                      <td className="px-4 py-2">
+                                        <span className={`px-2 py-1 rounded text-xs font-bold ${calculateGrade(score).color}`}>
+                                          {calculateGrade(score).grade}
                                         </span>
-                                      </div>
-                                    ) : (
-                                      <span className="text-xs text-slate-400 italic font-normal">Pending Data</span>
-                                    )}
-                                  </td>
-
-                                  {/* Save Button */}
-                                  <td className="px-4 py-3 text-right">
-                                    <button
-                                      onClick={() => handleSaveSingleScore(student.id)}
-                                      className="bg-indigo-600 text-white text-xs font-bold px-3 py-1.5 rounded-lg hover:bg-indigo-700 transition"
-                                    >
-                                      Save Rows
-                                    </button>
-                                  </td>
-                                </tr>
-                              );
-                            })}
+                                      </td>
+                                    {/* Ledger Operations Buttons */}
+                                    <td className="px-4 py-3 text-right whitespace-nowrap">
+                                      {isEditingActive ? (
+                                        <div className="flex justify-end gap-1.5">
+                                          <button
+                                            onClick={() => handleSaveSingleScore(score.student_id)}
+                                            className="bg-indigo-600 hover:bg-indigo-700 text-white text-[11px] font-bold px-2 py-1 rounded shadow-2xs cursor-pointer"
+                                          >
+                                            Save
+                                          </button>
+                                          <button
+                                            onClick={() => {
+                                              setSelectedDetailedStudentId(null);
+                                              setEditingCAT1(prev => { const n = { ...prev }; delete n[score.student_id]; return n; });
+                                              setEditingCAT2(prev => { const n = { ...prev }; delete n[score.student_id]; return n; });
+                                              setEditingFinalExam(prev => { const n = { ...prev }; delete n[score.student_id]; return n; });
+                                            }}
+                                            className="bg-slate-200 hover:bg-slate-300 text-slate-700 text-[11px] font-bold px-2 py-1 rounded cursor-pointer"
+                                          >
+                                            Cancel
+                                          </button>
+                                        </div>
+                                      ) : (
+                                        <div className="flex justify-end gap-2.5">
+                                          <button
+                                            onClick={() => {
+                                              setEditingCAT1(prev => ({ ...prev, [score.student_id]: score.CAT_1 !== null ? String(score.CAT_1) : '' }));
+                                              setEditingCAT2(prev => ({ ...prev, [score.student_id]: score.CAT_2 !== null ? String(score.CAT_2) : '' }));
+                                              setEditingFinalExam(prev => ({ ...prev, [score.student_id]: score.final_exam !== null ? String(score.final_exam) : '' }));
+                                              setSelectedDetailedStudentId(score.student_id);
+                                            }}
+                                            className="text-amber-600 hover:text-amber-800 font-bold hover:underline cursor-pointer text-xs"
+                                          >
+                                            Edit
+                                          </button>
+                                          <button
+                                            onClick={async () => {
+                                              if (!confirm("Are you sure you want to permanently delete this grade record?")) return;
+                                              const { error } = await supabase.from('scores').delete().eq('id', score.id);
+                                              if (error) alert(error.message);
+                                              else fetchScores();
+                                            }}
+                                            className="text-red-600 hover:text-red-700 font-bold hover:underline cursor-pointer text-xs"
+                                          >
+                                            Delete
+                                          </button>
+                                        </div>
+                                      )}
+                                    </td>
+                                  </tr>
+                                );
+                              })
+                          )}
                         </tbody>
                       </table>
                     </div>
-                  )}
+                  </div>
+
                 </div>
               )}
 
             </div>
           )}
-        </main>
+          {activeTab === 'rankings' && (
+            <div className="space-y-10 animate-fadeIn">
+              {streams.map((stream) => {
+                const classRankings = getRankingsByStream(stream.id);
+                
+                return (
+                  <div key={stream.id} className="bg-white border border-slate-200 rounded-xl shadow-sm overflow-hidden">
+                    {/* Stream Header */}
+                    <div className="px-6 py-4 bg-slate-50 border-b border-slate-200 flex justify-between items-center">
+                      <h3 className="font-bold text-slate-800 text-sm uppercase tracking-wider">
+                        {stream.name} - Performance Board
+                      </h3>
+                      <span className="text-[10px] bg-indigo-100 text-indigo-700 px-2 py-1 rounded font-bold">
+                        {classRankings.length} Students
+                      </span>
+                    </div>
+
+                    {/* Stream-Specific Table */}
+                    <table className="w-full text-left">
+                      <tbody className="divide-y divide-slate-100">
+                        {classRankings.length > 0 ? (
+                          classRankings.map((student, index) => (
+                            <tr key={student.id} className="hover:bg-slate-50 transition text-xs">
+                              <td className="px-6 py-3 font-black text-slate-400 w-16">#{index + 1}</td>
+                              <td className="px-6 py-3 font-semibold text-slate-700">{student.first_name} {student.last_name}</td>
+                              <td className="px-6 py-3 text-right font-bold text-indigo-600">{student.final_grade}</td>
+                            </tr>
+                          ))
+                        ) : (
+                          <tr>
+                            <td colSpan={3} className="px-6 py-8 text-center text-slate-400 italic">
+                              No performance data available for this stream.
+                            </td>
+                          </tr>
+                        )}
+                      </tbody>
+                    </table>
+                  </div>
+                );
+              })}
+            </div>
+          )}
+         </main>
       </div>
     </div>
   );
