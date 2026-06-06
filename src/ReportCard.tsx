@@ -1,14 +1,18 @@
 import React, { forwardRef } from 'react';
-
+interface ReportCardProps {
+  student: any;
+  scores: any[];
+  streams: any[];
+}
 // Create a component that matches your interface
-export const ReportCard = forwardRef(({ student, scores, streams }: any, ref: any) => {
-  const streamName = streams.find((s: any) => s.id === student.stream_id)?.name;
-
+export const ReportCard = forwardRef<HTMLDivElement, ReportCardProps>(
+  ({ student, scores, streams }, ref) => {
+    const studentStream = streams.find((s: any) => s.id === student.stream_id)?.name || "N/A";
   return (
     <div ref={ref} className="p-8 bg-white border border-slate-200">
       <h1 className="text-2xl font-bold">Academic Report Card</h1>
       <p><strong>Name:</strong> {student.first_name} {student.last_name}</p>
-      <p><strong>Stream:</strong> {streamName} | <strong>Adm:</strong> {student.admission_number}</p>
+      <p><strong>Stream:</strong> {studentStream} | <strong>Adm:</strong> {student.admission_number}</p>
 
       <table className="w-full mt-6 border-collapse">
         <thead>
