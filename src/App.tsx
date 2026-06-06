@@ -452,7 +452,7 @@ const handleSaveSingleScore = async (studentId: number) => {
   
 
   // Performs client-side array filtering based on the stream filtering dropdown choice
-  const filteredStudents = selectedStreamFilter === 'all' ? students : students.filter(s => String(s.stream_id) === selectedStreamFilter);
+  // const filteredStudents = selectedStreamFilter === 'all' ? students : students.filter(s => String(s.stream_id) === selectedStreamFilter);
 
   // Reads the master class stream rows from your database
   const fetchStreams = async () => {
