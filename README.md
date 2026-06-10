@@ -1,3 +1,12 @@
+
+# Railways Hosting free tier support ended. Therefore I have migrated hosting to github pages: 
+
+# Link
+ https://bernard-otieno.github.io/Ikonex_systems/
+
+
+-------------------------------------------------------------------------------------------------------
+
 # React + TypeScript + Vite
 
 This template provides a minimal setup to get React working in Vite with HMR and some ESLint rules.
@@ -71,3 +80,6 @@ export default defineConfig([
   },
 ])
 ```
+
+
+
